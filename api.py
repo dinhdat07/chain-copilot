@@ -8,7 +8,13 @@ from core.memory import SQLiteStore
 from core.models import Event
 from core.state import clone_state, load_initial_state, state_summary, utc_now
 from orchestrator.graph import build_graph
-from orchestrator.service import approve_pending_plan, request_safer_plan, run_daily_plan
+from orchestrator.service import (
+    PendingApprovalError,
+    approve_pending_plan,
+    request_safer_plan,
+    reset_runtime,
+    run_daily_plan,
+)
 from simulation.runner import ScenarioRunner
 from simulation.scenarios import get_scenario_events, list_scenarios
 
@@ -64,10 +70,22 @@ def get_state() -> dict:
     return {"summary": state_summary(STATE), "state": STATE.model_dump(mode="json")}
 
 
+@app.post("/api/v1/reset")
+def reset_state() -> dict:
+    global STATE, GRAPH, RUNNER
+    STATE = reset_runtime(STORE)
+    GRAPH = build_graph()
+    RUNNER = ScenarioRunner(store=STORE)
+    return {"summary": state_summary(STATE), "state": STATE.model_dump(mode="json")}
+
+
 @app.post("/api/v1/plan/daily")
 def daily_plan() -> dict:
     global STATE
-    STATE = run_daily_plan(STATE, STORE, graph=GRAPH)
+    try:
+        STATE = run_daily_plan(STATE, STORE, graph=GRAPH)
+    except PendingApprovalError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     return _response_payload()
 
 
@@ -97,7 +115,10 @@ def run_scenario(request: ScenarioRequest) -> dict:
     global STATE
     if request.scenario_name not in list_scenarios():
         raise HTTPException(status_code=404, detail="unknown scenario")
-    STATE = RUNNER.run(STATE, request.scenario_name, seed=request.seed)
+    try:
+        STATE = RUNNER.run(STATE, request.scenario_name, seed=request.seed)
+    except PendingApprovalError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     payload = _response_payload()
     payload["scenario_history_count"] = len(STATE.scenario_history)
     return payload

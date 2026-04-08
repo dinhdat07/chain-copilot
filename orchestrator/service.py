@@ -7,6 +7,7 @@ from actions.executor import apply_plan, simulate_actions
 from core.enums import ActionType, ApprovalStatus, Mode, PlanStatus
 from core.memory import SQLiteStore
 from core.models import Action, DecisionLog, Event, Plan, SystemState
+from core.state import load_initial_state
 from orchestrator.graph import build_graph
 from policies.explainability import (
     build_plan_summary,
@@ -15,6 +16,10 @@ from policies.explainability import (
 )
 from policies.guardrails import approval_required
 from policies.scoring import compute_score
+
+
+class PendingApprovalError(RuntimeError):
+    pass
 
 
 def _latest_event(state: SystemState) -> Event | None:
@@ -27,6 +32,13 @@ def _save_state(state: SystemState, store: SQLiteStore) -> None:
     store.save_state(state)
     for decision_log in state.decision_logs:
         store.save_decision_log(decision_log)
+
+
+def ensure_no_pending_plan(state: SystemState) -> None:
+    if state.pending_plan is not None:
+        raise PendingApprovalError(
+            "resolve the pending approval before running another daily plan or scenario"
+        )
 
 
 def _current_pending_decision(state: SystemState, decision_id: str) -> DecisionLog:
@@ -97,9 +109,15 @@ def run_daily_plan(
     store: SQLiteStore,
     graph: Any | None = None,
 ) -> SystemState:
+    ensure_no_pending_plan(state)
     updated = (graph or build_graph()).invoke(state, None)
     _save_state(updated, store)
     return updated
+
+
+def reset_runtime(store: SQLiteStore) -> SystemState:
+    store.clear_all()
+    return load_initial_state()
 
 
 def approve_pending_plan(

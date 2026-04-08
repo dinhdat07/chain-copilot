@@ -7,6 +7,7 @@ from core.memory import SQLiteStore
 from core.models import ScenarioRun, SystemState
 from core.state import clone_state
 from orchestrator.graph import build_graph
+from orchestrator.service import ensure_no_pending_plan
 from simulation.learning import apply_learning
 from simulation.scenarios import get_scenario_events
 
@@ -17,6 +18,7 @@ class ScenarioRunner:
         self.store = store or SQLiteStore()
 
     def run(self, initial_state: SystemState, scenario_name: str, seed: int = 7) -> SystemState:
+        ensure_no_pending_plan(initial_state)
         state = clone_state(initial_state)
         started = time.perf_counter()
         events = get_scenario_events(scenario_name)
