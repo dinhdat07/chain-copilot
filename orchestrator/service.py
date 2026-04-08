@@ -8,6 +8,11 @@ from core.enums import ActionType, ApprovalStatus, Mode, PlanStatus
 from core.memory import SQLiteStore
 from core.models import Action, DecisionLog, Event, Plan, SystemState
 from orchestrator.graph import build_graph
+from policies.explainability import (
+    build_plan_summary,
+    build_winning_factors,
+    explain_rejected_actions,
+)
 from policies.guardrails import approval_required
 from policies.scoring import compute_score
 
@@ -78,10 +83,7 @@ def _build_safer_plan(state: SystemState, decision_log: DecisionLog) -> Plan:
         actions=selected_actions,
         score=score,
         score_breakdown=breakdown,
-        planner_reasoning=(
-            "generated a safer replan by limiting execution to the lowest-risk single action "
-            "from the pending plan"
-        ),
+        planner_reasoning=build_plan_summary(decision_log.before_kpis, simulated.kpis, breakdown),
         status=PlanStatus.PROPOSED,
     )
     needs_approval, reason = approval_required(plan, decision_log.before_kpis, simulated.kpis, _latest_event(state))
@@ -137,10 +139,18 @@ def request_safer_plan(
     if state.pending_plan is None:
         raise ValueError("no pending decision")
 
+    previous_plan_actions = list(state.pending_plan.actions)
     state.pending_plan.status = PlanStatus.REJECTED
     previous_decision.approval_status = ApprovalStatus.REJECTED
     safer_plan = _build_safer_plan(state, previous_decision)
     simulated = simulate_actions(state, safer_plan.actions)
+    winning_factors = build_winning_factors(
+        safer_plan.actions,
+        previous_decision.before_kpis,
+        simulated.kpis,
+        safer_plan.score_breakdown,
+    )
+    rejection_reasons = explain_rejected_actions(previous_plan_actions, safer_plan.actions, 1)
     new_decision = DecisionLog(
         decision_id=f"dec_{uuid4().hex[:8]}",
         plan_id=safer_plan.plan_id,
@@ -148,15 +158,16 @@ def request_safer_plan(
         before_kpis=previous_decision.before_kpis.model_copy(deep=True),
         after_kpis=simulated.kpis,
         selected_actions=[action.action_id for action in safer_plan.actions],
-        rejected_actions=[
-            {"action_id": action.action_id, "reason": "held back for safer replan"}
-            for action in state.latest_plan.actions
-            if action.action_id not in {selected.action_id for selected in safer_plan.actions}
-        ]
-        if state.latest_plan
-        else [],
+        rejected_actions=rejection_reasons,
         score_breakdown=safer_plan.score_breakdown,
         rationale=safer_plan.planner_reasoning,
+        winning_factors=winning_factors,
+        approval_required=safer_plan.approval_required,
+        approval_reason=(
+            safer_plan.approval_reason
+            if safer_plan.approval_required
+            else "no approval required: thresholds not triggered"
+        ),
         approval_status=ApprovalStatus.PENDING if safer_plan.approval_required else ApprovalStatus.AUTO_APPLIED,
     )
 

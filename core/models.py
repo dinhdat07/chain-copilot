@@ -127,6 +127,9 @@ class DecisionLog(BaseModel):
     rejected_actions: list[dict[str, str]] = Field(default_factory=list)
     score_breakdown: dict[str, float]
     rationale: str
+    winning_factors: list[str] = Field(default_factory=list)
+    approval_required: bool = False
+    approval_reason: str = ""
     approval_status: ApprovalStatus = ApprovalStatus.NOT_REQUIRED
 
 
@@ -140,11 +143,13 @@ class MemorySnapshot(BaseModel):
 
 
 class ScenarioRun(BaseModel):
+    run_id: str
     scenario_id: str
     seed: int
     events: list[Event]
     result_plan_id: str | None = None
     result_kpis: KPIState | None = None
+    outcome_summary: dict[str, Any] = Field(default_factory=dict)
     duration_ms: float = Field(default=0.0, ge=0.0)
     status: str = "pending"
 
