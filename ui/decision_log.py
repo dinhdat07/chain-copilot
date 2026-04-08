@@ -10,6 +10,11 @@ from ui.components import decision_log_dataframe
 
 def render_page(state: SystemState, store: SQLiteStore) -> None:
     st.title("Decision Log")
+    if state.decision_logs:
+        latest = state.decision_logs[-1]
+        st.caption(
+            f"Latest decision `{latest.decision_id}` approval status: {latest.approval_status.value}"
+        )
     st.subheader("Current Session")
     st.dataframe(decision_log_dataframe(state), use_container_width=True)
     st.subheader("Persisted Logs")

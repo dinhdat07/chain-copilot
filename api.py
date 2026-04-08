@@ -3,12 +3,12 @@ from __future__ import annotations
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
-from actions.executor import apply_plan
-from core.enums import ApprovalStatus, EventType, Mode, PlanStatus
+from core.enums import EventType
 from core.memory import SQLiteStore
 from core.models import Event
 from core.state import clone_state, load_initial_state, state_summary, utc_now
 from orchestrator.graph import build_graph
+from orchestrator.service import approve_pending_plan, request_safer_plan, run_daily_plan
 from simulation.runner import ScenarioRunner
 from simulation.scenarios import get_scenario_events, list_scenarios
 
@@ -50,9 +50,25 @@ def _current_decision_id() -> str | None:
 app = FastAPI(title="ChainCopilot API", version="0.1.0")
 
 
+def _response_payload() -> dict:
+    return {
+        "summary": state_summary(STATE),
+        "latest_plan": STATE.latest_plan.model_dump(mode="json") if STATE.latest_plan else None,
+        "pending_plan": STATE.pending_plan.model_dump(mode="json") if STATE.pending_plan else None,
+        "decision_id": _current_decision_id(),
+    }
+
+
 @app.get("/api/v1/state")
 def get_state() -> dict:
     return {"summary": state_summary(STATE), "state": STATE.model_dump(mode="json")}
+
+
+@app.post("/api/v1/plan/daily")
+def daily_plan() -> dict:
+    global STATE
+    STATE = run_daily_plan(STATE, STORE, graph=GRAPH)
+    return _response_payload()
 
 
 @app.post("/api/v1/events")
@@ -73,11 +89,7 @@ def ingest_event(request: EventRequest) -> dict:
     STORE.save_state(STATE)
     if STATE.decision_logs:
         STORE.save_decision_log(STATE.decision_logs[-1])
-    return {
-        "summary": state_summary(STATE),
-        "latest_plan": STATE.latest_plan.model_dump(mode="json") if STATE.latest_plan else None,
-        "decision_id": _current_decision_id(),
-    }
+    return _response_payload()
 
 
 @app.post("/api/v1/scenarios/run")
@@ -86,42 +98,31 @@ def run_scenario(request: ScenarioRequest) -> dict:
     if request.scenario_name not in list_scenarios():
         raise HTTPException(status_code=404, detail="unknown scenario")
     STATE = RUNNER.run(STATE, request.scenario_name, seed=request.seed)
-    return {
-        "summary": state_summary(STATE),
-        "latest_plan": STATE.latest_plan.model_dump(mode="json") if STATE.latest_plan else None,
-        "scenario_history_count": len(STATE.scenario_history),
-    }
+    payload = _response_payload()
+    payload["scenario_history_count"] = len(STATE.scenario_history)
+    return payload
 
 
 @app.post("/api/v1/decisions/{decision_id}/approve")
 def approve_decision(decision_id: str, request: ApprovalRequest) -> dict:
     global STATE
-    if not STATE.pending_plan or not STATE.decision_logs:
-        raise HTTPException(status_code=404, detail="no pending decision")
-    current_decision = STATE.decision_logs[-1]
-    if current_decision.decision_id != decision_id:
-        raise HTTPException(status_code=404, detail="decision not found")
+    try:
+        STATE = approve_pending_plan(STATE, STORE, decision_id, request.approve)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    payload = _response_payload()
+    payload["approved"] = request.approve
+    return payload
 
-    if request.approve:
-        STATE.pending_plan.status = PlanStatus.APPROVED
-        STATE = apply_plan(STATE, STATE.pending_plan)
-        if STATE.decision_logs:
-            STATE.decision_logs[-1].approval_status = ApprovalStatus.APPROVED
-        STATE.mode = Mode.CRISIS if STATE.active_events else Mode.NORMAL
-    else:
-        STATE.pending_plan.status = PlanStatus.REJECTED
-        current_decision.approval_status = ApprovalStatus.REJECTED
-        STATE.pending_plan = None
-        if STATE.decision_logs:
-            STATE.decision_logs[-1].approval_status = ApprovalStatus.REJECTED
-        STATE.mode = Mode.NORMAL
-    STORE.save_state(STATE)
-    STORE.save_decision_log(STATE.decision_logs[-1] if STATE.decision_logs else current_decision)
-    return {
-        "decision_id": decision_id,
-        "approved": request.approve,
-        "summary": state_summary(STATE),
-    }
+
+@app.post("/api/v1/decisions/{decision_id}/safer-plan")
+def safer_plan(decision_id: str) -> dict:
+    global STATE
+    try:
+        STATE = request_safer_plan(STATE, STORE, decision_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return _response_payload()
 
 
 @app.get("/api/v1/decision-logs")
