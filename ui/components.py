@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from core.enums import ActionType, ApprovalStatus, Mode
 from core.models import DecisionLog, Plan, SystemState
 
 
@@ -13,6 +14,96 @@ def render_kpis(state: SystemState) -> None:
     cols[2].metric("Disruption Risk", f"{state.kpis.disruption_risk:.1%}")
     cols[3].metric("Recovery Speed", f"{state.kpis.recovery_speed:.1%}")
     cols[4].metric("Stockout Risk", f"{state.kpis.stockout_risk:.1%}")
+
+
+def mode_summary(state: SystemState) -> dict[str, str]:
+    if state.mode == Mode.NORMAL:
+        return {
+            "label": "Normal Mode",
+            "tone": "success",
+            "message": "Cost-optimized daily control tower operations are active.",
+        }
+    if state.mode == Mode.CRISIS:
+        return {
+            "label": "Crisis Mode",
+            "tone": "warning",
+            "message": "The system detected a disruption and is prioritizing recovery and resilience.",
+        }
+    return {
+        "label": "Approval Mode",
+        "tone": "error",
+        "message": "A high-risk recovery plan is waiting for human approval before execution.",
+    }
+
+
+def selected_action_summary(plan: Plan | None) -> dict[str, str] | None:
+    if plan is None or not plan.actions:
+        return None
+    action = next(
+        (item for item in plan.actions if item.action_type != ActionType.NO_OP),
+        plan.actions[0],
+    )
+    return {
+        "action_id": action.action_id,
+        "title": f"{action.action_type.value.replace('_', ' ').title()} for {action.target_id}",
+        "detail": action.reason or "No additional explanation provided.",
+        "impact": (
+            f"Service {action.estimated_service_delta:+.2f} | "
+            f"Risk {action.estimated_risk_delta:+.2f} | "
+            f"Cost {action.estimated_cost_delta:+.2f}"
+        ),
+    }
+
+
+def demo_flow_dataframe(state: SystemState) -> pd.DataFrame:
+    latest = state.decision_logs[-1] if state.decision_logs else None
+    approval_state = "not required"
+    if latest and latest.approval_required:
+        approval_state = (
+            "waiting for approval"
+            if state.pending_plan is not None
+            else latest.approval_status.value.replace("_", " ")
+        )
+    rows = [
+        {
+            "step": "1. Daily plan",
+            "status": "complete" if latest else "pending",
+            "detail": "Normal-mode optimized plan built" if latest else "Run the daily plan to begin.",
+        },
+        {
+            "step": "2. Disruption detected",
+            "status": "complete" if state.active_events else "pending",
+            "detail": (
+                ", ".join(event.type.value for event in state.active_events)
+                if state.active_events
+                else "No active disruption events."
+            ),
+        },
+        {
+            "step": "3. Autonomous replan",
+            "status": "complete" if latest and latest.event_ids else "pending",
+            "detail": (
+                f"Plan {latest.plan_id} selected in {state.mode.value} mode"
+                if latest and latest.event_ids
+                else "Waiting for a disruption-triggered replan."
+            ),
+        },
+        {
+            "step": "4. Approval workflow",
+            "status": approval_state,
+            "detail": latest.approval_reason if latest and latest.approval_reason else "No approval gate active.",
+        },
+        {
+            "step": "5. Learn from outcomes",
+            "status": "complete" if state.scenario_history else "pending",
+            "detail": (
+                f"{len(state.scenario_history)} scenario run(s) recorded in memory"
+                if state.scenario_history
+                else "No scenario outcomes recorded yet."
+            ),
+        },
+    ]
+    return pd.DataFrame(rows)
 
 
 def inventory_dataframe(state: SystemState) -> pd.DataFrame:
@@ -27,6 +118,23 @@ def inventory_dataframe(state: SystemState) -> pd.DataFrame:
                 "preferred_route_id": item.preferred_route_id,
             }
             for item in state.inventory.values()
+        ]
+    )
+
+
+def event_feed_dataframe(state: SystemState) -> pd.DataFrame:
+    if not state.active_events:
+        return pd.DataFrame(columns=["event_id", "type", "severity", "entities", "detail"])
+    return pd.DataFrame(
+        [
+            {
+                "event_id": event.event_id,
+                "type": event.type.value,
+                "severity": round(event.severity, 2),
+                "entities": ", ".join(event.entity_ids),
+                "detail": ", ".join(f"{key}={value}" for key, value in event.payload.items()),
+            }
+            for event in state.active_events
         ]
     )
 
@@ -141,3 +249,11 @@ def memory_summary_tables(state: SystemState) -> tuple[pd.DataFrame, pd.DataFram
         pd.DataFrame(route_rows),
         pd.DataFrame(scenario_rows),
     )
+
+
+def approval_badge_text(decision_log: DecisionLog | None) -> str:
+    if decision_log is None:
+        return "No approval activity yet"
+    if decision_log.approval_status == ApprovalStatus.PENDING:
+        return "Approval pending"
+    return f"Approval {decision_log.approval_status.value.replace('_', ' ')}"

@@ -2,14 +2,15 @@
 
 ## Objective
 
-Increase demo reliability by fixing brittle reset behavior, blocking invalid actions during pending approval, clarifying the current blocked state, and adding focused hardening tests.
+Increase demo reliability by fixing brittle reset behavior, blocking invalid actions during pending approval, and polishing the guided demo flow so judges can clearly follow normal mode, disruption, replanning, approval, and updated state.
 
 ## Scope
 
 - Add clean reset behavior for API and Streamlit demo restarts.
 - Block daily-plan and scenario execution while approval is pending.
 - Improve visibility of the current approval-blocked state in the UI.
-- Add focused tests for reset and approval edge cases.
+- Add guided demo-flow presentation for mode, selected plan, and state progression.
+- Add focused tests for reset, approval edge cases, and demo presentation helpers.
 
 ## Files To Modify
 
@@ -21,9 +22,12 @@ Increase demo reliability by fixing brittle reset behavior, blocking invalid act
 - [x] `ui/overview.py`
 - [x] `ui/scenarios.py`
 - [x] `ui/decision_log.py`
+- [x] `ui/components.py`
+- [x] `docs/demo_script.md`
 - [x] `tests/test_demo_flow_api.py`
 - [x] `tests/test_scenarios.py`
 - [x] `tests/test_demo_hardening.py`
+- [x] `tests/test_demo_presenter.py`
 
 ## Implementation Steps
 
@@ -35,7 +39,11 @@ Increase demo reliability by fixing brittle reset behavior, blocking invalid act
 - [x] Update Streamlit reset to clear both session and persisted state.
 - [x] Surface blocked-state messaging in Overview and Scenarios.
 - [x] Improve Decision Log empty/blocking state clarity.
+- [x] Add a guided control-tower status section for mode, selected plan, and demo progress.
+- [x] Improve scenario descriptions and latest-event presentation for judges.
+- [x] Update the demo script to match the polished flow.
 - [x] Add hardening tests for reset, blocking, and reject behavior.
+- [x] Add helper tests for demo-flow presentation logic.
 
 ## Testing Approach
 

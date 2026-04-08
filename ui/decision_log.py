@@ -6,6 +6,7 @@ import streamlit as st
 from core.memory import SQLiteStore
 from core.models import SystemState
 from ui.components import (
+    approval_badge_text,
     decision_log_dataframe,
     memory_summary_tables,
     rejected_actions_dataframe,
@@ -18,7 +19,7 @@ def render_page(state: SystemState, store: SQLiteStore) -> None:
     if state.decision_logs:
         latest = state.decision_logs[-1]
         st.caption(
-            f"Latest decision `{latest.decision_id}` approval status: {latest.approval_status.value}"
+            f"Latest decision `{latest.decision_id}` | {approval_badge_text(latest)}"
         )
         st.write(f"Latest plan: `{latest.plan_id}`")
         if state.pending_plan:
@@ -38,7 +39,11 @@ def render_page(state: SystemState, store: SQLiteStore) -> None:
     else:
         st.info("No decisions are stored yet.")
     st.subheader("Current Session")
-    st.dataframe(decision_log_dataframe(state), use_container_width=True)
+    session_df = decision_log_dataframe(state)
+    if session_df.empty:
+        st.info("Current-session decision history will appear here after the first plan is generated.")
+    else:
+        st.dataframe(session_df, use_container_width=True, hide_index=True)
     st.subheader("Persisted Logs")
     items = store.list_decision_logs()
     if items:
@@ -48,8 +53,17 @@ def render_page(state: SystemState, store: SQLiteStore) -> None:
     st.subheader("Learned Memory")
     supplier_df, route_df, scenario_df = memory_summary_tables(state)
     st.write("Supplier reliability")
-    st.dataframe(supplier_df, use_container_width=True)
+    if supplier_df.empty:
+        st.info("No supplier learning updates yet.")
+    else:
+        st.dataframe(supplier_df, use_container_width=True, hide_index=True)
     st.write("Route disruption priors")
-    st.dataframe(route_df, use_container_width=True)
+    if route_df.empty:
+        st.info("No route-learning updates yet.")
+    else:
+        st.dataframe(route_df, use_container_width=True, hide_index=True)
     st.write("Scenario outcome history")
-    st.dataframe(scenario_df, use_container_width=True)
+    if scenario_df.empty:
+        st.info("No scenario history has been recorded yet.")
+    else:
+        st.dataframe(scenario_df, use_container_width=True, hide_index=True)

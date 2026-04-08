@@ -9,10 +9,10 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from core.memory import SQLiteStore
-from core.state import load_initial_state
-from orchestrator.service import reset_runtime
-from ui import decision_log, overview, scenarios, what_if
+from core.memory import SQLiteStore  # noqa: E402
+from core.state import load_initial_state  # noqa: E402
+from orchestrator.service import reset_runtime  # noqa: E402
+from ui import decision_log, overview, scenarios, what_if  # noqa: E402
 
 
 def _ensure_state() -> None:
