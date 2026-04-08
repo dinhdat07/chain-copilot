@@ -19,7 +19,7 @@ def render_page(state: SystemState) -> None:
     scenario_name = st.selectbox("Scenario", list_scenarios(), index=0)
     st.subheader("Current Network KPIs")
     render_kpis(state)
-    if st.button("Simulate alternative plan", use_container_width=True):
+    if st.button("Simulate alternative plan", width="stretch"):
         graph = build_graph()
         simulated = clone_state(state)
         for event in get_scenario_events(scenario_name):
@@ -38,12 +38,12 @@ def render_page(state: SystemState) -> None:
                 )
             st.dataframe(
                 plan_actions_dataframe(simulated.latest_plan),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
         st.subheader("Current vs Simulated KPIs")
         st.dataframe(
             kpi_delta_dataframe(state.kpis, simulated.kpis),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )

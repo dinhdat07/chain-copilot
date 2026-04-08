@@ -157,6 +157,22 @@ def decision_log_dataframe(state: SystemState) -> pd.DataFrame:
     )
 
 
+def decision_log_summary_dataframe(logs: list[DecisionLog]) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "decision_id": log.decision_id,
+                "plan_id": log.plan_id,
+                "approval_status": approval_badge_text(log),
+                "approval_required": log.approval_required,
+                "service_level_after": log.after_kpis.service_level,
+                "total_cost_after": log.after_kpis.total_cost,
+            }
+            for log in logs
+        ]
+    )
+
+
 def kpi_comparison_dataframe(decision_log: DecisionLog) -> pd.DataFrame:
     before = decision_log.before_kpis
     after = decision_log.after_kpis

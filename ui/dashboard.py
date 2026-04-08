@@ -33,7 +33,7 @@ def main() -> None:
         "Page",
         ["Overview", "Scenarios", "Decision Log", "What-if"],
     )
-    if st.sidebar.button("Reset State", use_container_width=True):
+    if st.sidebar.button("Reset State", width="stretch"):
         st.session_state["app_state"] = reset_runtime(store)
         state = st.session_state["app_state"]
         st.rerun()

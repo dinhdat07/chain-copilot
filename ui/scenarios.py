@@ -31,7 +31,7 @@ def render_page(state: SystemState, store: SQLiteStore) -> SystemState:
         )
     for name in list_scenarios():
         st.write(f"`{name}`: {SCENARIO_DESCRIPTIONS.get(name, 'Disruption scenario')}")
-        if st.button(f"Run {name}", use_container_width=True, disabled=blocked):
+        if st.button(f"Run {name}", width="stretch", disabled=blocked):
             updated_state = runner.run(state, name)
             st.success(f"Completed scenario: {name}")
     if updated_state.latest_plan:
@@ -46,12 +46,12 @@ def render_page(state: SystemState, store: SQLiteStore) -> SystemState:
             st.info(
                 f"Selected action: {selected['title']} | {selected['impact']} | {selected['detail']}"
             )
-        st.dataframe(plan_actions_dataframe(latest_plan), use_container_width=True, hide_index=True)
+        st.dataframe(plan_actions_dataframe(latest_plan), width="stretch", hide_index=True)
     if updated_state.decision_logs:
         st.subheader("Before vs After KPIs")
         st.dataframe(
             kpi_comparison_dataframe(updated_state.decision_logs[-1]),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
     if updated_state.pending_plan and updated_state.decision_logs:

@@ -22,7 +22,7 @@ def render_page(state: SystemState, store: SQLiteStore) -> SystemState:
     is_blocked = updated_state.pending_plan is not None
     summary = mode_summary(updated_state)
     action_col, mode_col = st.columns([1, 2])
-    if action_col.button("Run daily plan", use_container_width=True, disabled=is_blocked):
+    if action_col.button("Run daily plan", width="stretch", disabled=is_blocked):
         updated_state = run_daily_plan(state, store)
         st.session_state["app_state"] = updated_state
         st.rerun()
@@ -39,12 +39,12 @@ def render_page(state: SystemState, store: SQLiteStore) -> SystemState:
     render_kpis(updated_state)
 
     st.subheader("Guided Demo Flow")
-    st.dataframe(demo_flow_dataframe(updated_state), use_container_width=True, hide_index=True)
+    st.dataframe(demo_flow_dataframe(updated_state), width="stretch", hide_index=True)
 
     if updated_state.decision_logs:
         latest_decision = updated_state.decision_logs[-1]
         st.subheader("Baseline vs Selected Plan")
-        st.dataframe(kpi_comparison_dataframe(latest_decision), use_container_width=True)
+        st.dataframe(kpi_comparison_dataframe(latest_decision), width="stretch", hide_index=True)
 
     if updated_state.latest_plan:
         st.subheader("Latest Plan")
@@ -58,7 +58,7 @@ def render_page(state: SystemState, store: SQLiteStore) -> SystemState:
             st.info(
                 f"Selected action: {selected['title']} | {selected['impact']} | {selected['detail']}"
             )
-        st.dataframe(plan_actions_dataframe(plan), use_container_width=True)
+        st.dataframe(plan_actions_dataframe(plan), width="stretch", hide_index=True)
 
     if updated_state.pending_plan and updated_state.decision_logs:
         decision_id = updated_state.decision_logs[-1].decision_id
@@ -66,15 +66,15 @@ def render_page(state: SystemState, store: SQLiteStore) -> SystemState:
         st.info(f"System is blocked by pending decision `{decision_id}` until it is resolved.")
         st.warning(updated_state.pending_plan.approval_reason or "Manual approval required.")
         approve_col, reject_col, safer_col = st.columns(3)
-        if approve_col.button("Approve plan", use_container_width=True):
+        if approve_col.button("Approve plan", width="stretch"):
             updated_state = approve_pending_plan(updated_state, store, decision_id, True)
             st.session_state["app_state"] = updated_state
             st.rerun()
-        if reject_col.button("Reject plan", use_container_width=True):
+        if reject_col.button("Reject plan", width="stretch"):
             updated_state = approve_pending_plan(updated_state, store, decision_id, False)
             st.session_state["app_state"] = updated_state
             st.rerun()
-        if safer_col.button("Request safer plan", use_container_width=True):
+        if safer_col.button("Request safer plan", width="stretch"):
             updated_state = request_safer_plan(updated_state, store, decision_id)
             st.session_state["app_state"] = updated_state
             st.rerun()
@@ -86,8 +86,8 @@ def render_page(state: SystemState, store: SQLiteStore) -> SystemState:
     if feed.empty:
         st.info("No active events. The network is operating in its current planned state.")
     else:
-        st.dataframe(feed, use_container_width=True, hide_index=True)
+        st.dataframe(feed, width="stretch", hide_index=True)
 
     st.subheader("Inventory")
-    st.dataframe(inventory_dataframe(updated_state), use_container_width=True)
+    st.dataframe(inventory_dataframe(updated_state), width="stretch", hide_index=True)
     return updated_state
