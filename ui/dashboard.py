@@ -30,7 +30,7 @@ def main() -> None:
         state = st.session_state["app_state"]
 
     if page == "Overview":
-        overview.render_page(state)
+        st.session_state["app_state"] = overview.render_page(state, store)
     elif page == "Scenarios":
         st.session_state["app_state"] = scenarios.render_page(state, store)
     elif page == "Decision Log":

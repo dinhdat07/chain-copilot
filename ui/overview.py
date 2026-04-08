@@ -3,16 +3,62 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from core.memory import SQLiteStore
 from core.models import SystemState
-from ui.components import inventory_dataframe, render_kpis
+from orchestrator.service import approve_pending_plan, request_safer_plan, run_daily_plan
+from ui.components import (
+    inventory_dataframe,
+    kpi_comparison_dataframe,
+    plan_actions_dataframe,
+    render_kpis,
+)
 
-
-def render_page(state: SystemState) -> None:
+def render_page(state: SystemState, store: SQLiteStore) -> SystemState:
+    updated_state = state
     st.title("Overview")
-    st.caption(f"Mode: {state.mode.value}")
-    render_kpis(state)
+    action_col, mode_col = st.columns([1, 2])
+    if action_col.button("Run daily plan", use_container_width=True):
+        updated_state = run_daily_plan(state, store)
+        st.session_state["app_state"] = updated_state
+        st.rerun()
+    mode_col.caption(f"Mode: {updated_state.mode.value}")
+
+    render_kpis(updated_state)
+
+    if updated_state.decision_logs:
+        latest_decision = updated_state.decision_logs[-1]
+        st.subheader("Latest Plan Comparison")
+        st.dataframe(kpi_comparison_dataframe(latest_decision), use_container_width=True)
+
+    if updated_state.latest_plan:
+        st.subheader("Latest Plan")
+        plan = updated_state.latest_plan
+        st.caption(
+            f"Plan `{plan.plan_id}` | score {plan.score:.4f} | status {plan.status.value} | "
+            f"approval required: {plan.approval_required}"
+        )
+        st.dataframe(plan_actions_dataframe(plan), use_container_width=True)
+
+    if updated_state.pending_plan and updated_state.decision_logs:
+        decision_id = updated_state.decision_logs[-1].decision_id
+        st.subheader("Pending Approval")
+        st.warning(updated_state.pending_plan.approval_reason or "Manual approval required.")
+        approve_col, reject_col, safer_col = st.columns(3)
+        if approve_col.button("Approve plan", use_container_width=True):
+            updated_state = approve_pending_plan(updated_state, store, decision_id, True)
+            st.session_state["app_state"] = updated_state
+            st.rerun()
+        if reject_col.button("Reject plan", use_container_width=True):
+            updated_state = approve_pending_plan(updated_state, store, decision_id, False)
+            st.session_state["app_state"] = updated_state
+            st.rerun()
+        if safer_col.button("Request safer plan", use_container_width=True):
+            updated_state = request_safer_plan(updated_state, store, decision_id)
+            st.session_state["app_state"] = updated_state
+            st.rerun()
+
     st.subheader("Inventory")
-    st.dataframe(inventory_dataframe(state), use_container_width=True)
+    st.dataframe(inventory_dataframe(updated_state), use_container_width=True)
     st.subheader("Active Events")
     active_events = [
         {
@@ -21,6 +67,7 @@ def render_page(state: SystemState) -> None:
             "severity": event.severity,
             "source": event.source,
         }
-        for event in state.active_events
+        for event in updated_state.active_events
     ]
     st.dataframe(pd.DataFrame(active_events), use_container_width=True)
+    return updated_state

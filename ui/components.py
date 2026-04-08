@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from core.models import SystemState
+from core.models import DecisionLog, Plan, SystemState
 
 
 def render_kpis(state: SystemState) -> None:
@@ -43,5 +43,55 @@ def decision_log_dataframe(state: SystemState) -> pd.DataFrame:
                 "rationale": log.rationale,
             }
             for log in reversed(state.decision_logs)
+        ]
+    )
+
+
+def kpi_comparison_dataframe(decision_log: DecisionLog) -> pd.DataFrame:
+    before = decision_log.before_kpis
+    after = decision_log.after_kpis
+    return pd.DataFrame(
+        [
+            {
+                "metric": "service_level",
+                "before": before.service_level,
+                "after": after.service_level,
+                "delta": round(after.service_level - before.service_level, 4),
+            },
+            {
+                "metric": "total_cost",
+                "before": before.total_cost,
+                "after": after.total_cost,
+                "delta": round(after.total_cost - before.total_cost, 2),
+            },
+            {
+                "metric": "disruption_risk",
+                "before": before.disruption_risk,
+                "after": after.disruption_risk,
+                "delta": round(after.disruption_risk - before.disruption_risk, 4),
+            },
+            {
+                "metric": "recovery_speed",
+                "before": before.recovery_speed,
+                "after": after.recovery_speed,
+                "delta": round(after.recovery_speed - before.recovery_speed, 4),
+            },
+        ]
+    )
+
+
+def plan_actions_dataframe(plan: Plan) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "action_id": action.action_id,
+                "type": action.action_type.value,
+                "target_id": action.target_id,
+                "estimated_cost_delta": action.estimated_cost_delta,
+                "estimated_risk_delta": action.estimated_risk_delta,
+                "estimated_recovery_hours": action.estimated_recovery_hours,
+                "reason": action.reason,
+            }
+            for action in plan.actions
         ]
     )

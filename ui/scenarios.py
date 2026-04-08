@@ -20,4 +20,9 @@ def render_page(state: SystemState, store: SQLiteStore) -> SystemState:
     if updated_state.latest_plan:
         st.subheader("Latest Plan")
         st.json(updated_state.latest_plan.model_dump(mode="json"))
+    if updated_state.pending_plan and updated_state.decision_logs:
+        st.warning(
+            "Scenario generated a pending approval plan. Review it from Overview. "
+            f"Decision: {updated_state.decision_logs[-1].decision_id}"
+        )
     return updated_state
