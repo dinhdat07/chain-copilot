@@ -13,8 +13,14 @@ def render_page(state: SystemState, store: SQLiteStore) -> SystemState:
     st.write("Run one of the four disruption scenarios against the current digital twin.")
     runner = ScenarioRunner(store=store)
     updated_state = state
+    blocked = updated_state.pending_plan is not None
+    if blocked and updated_state.decision_logs:
+        st.warning(
+            "Scenario execution is paused until pending approval is resolved. "
+            f"Current decision: {updated_state.decision_logs[-1].decision_id}"
+        )
     for name in list_scenarios():
-        if st.button(f"Run {name}", use_container_width=True):
+        if st.button(f"Run {name}", use_container_width=True, disabled=blocked):
             updated_state = runner.run(state, name)
             st.success(f"Completed scenario: {name}")
     if updated_state.latest_plan:

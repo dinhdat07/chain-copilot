@@ -1,5 +1,8 @@
+import pytest
+
 from core.enums import ApprovalStatus, Mode
 from core.state import load_initial_state
+from orchestrator.service import PendingApprovalError
 from simulation.runner import ScenarioRunner
 
 
@@ -29,3 +32,11 @@ def test_compound_disruption_requires_approval_or_crisis_plan() -> None:
         ApprovalStatus.PENDING,
         ApprovalStatus.AUTO_APPLIED,
     }
+
+
+def test_runner_blocks_new_scenario_when_approval_is_pending() -> None:
+    state = load_initial_state()
+    runner = ScenarioRunner()
+    pending_state = runner.run(state, "supplier_delay")
+    with pytest.raises(PendingApprovalError):
+        runner.run(pending_state, "route_blockage")

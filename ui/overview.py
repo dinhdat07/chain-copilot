@@ -16,8 +16,9 @@ from ui.components import (
 def render_page(state: SystemState, store: SQLiteStore) -> SystemState:
     updated_state = state
     st.title("Overview")
+    is_blocked = updated_state.pending_plan is not None
     action_col, mode_col = st.columns([1, 2])
-    if action_col.button("Run daily plan", use_container_width=True):
+    if action_col.button("Run daily plan", use_container_width=True, disabled=is_blocked):
         updated_state = run_daily_plan(state, store)
         st.session_state["app_state"] = updated_state
         st.rerun()
@@ -42,6 +43,7 @@ def render_page(state: SystemState, store: SQLiteStore) -> SystemState:
     if updated_state.pending_plan and updated_state.decision_logs:
         decision_id = updated_state.decision_logs[-1].decision_id
         st.subheader("Pending Approval")
+        st.info(f"System is blocked by pending decision `{decision_id}` until it is resolved.")
         st.warning(updated_state.pending_plan.approval_reason or "Manual approval required.")
         approve_col, reject_col, safer_col = st.columns(3)
         if approve_col.button("Approve plan", use_container_width=True):
@@ -56,6 +58,8 @@ def render_page(state: SystemState, store: SQLiteStore) -> SystemState:
             updated_state = request_safer_plan(updated_state, store, decision_id)
             st.session_state["app_state"] = updated_state
             st.rerun()
+    elif not updated_state.decision_logs:
+        st.info("No decisions have been generated yet. Run the daily plan or a scenario to start the log.")
 
     st.subheader("Inventory")
     st.dataframe(inventory_dataframe(updated_state), use_container_width=True)

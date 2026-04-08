@@ -72,3 +72,9 @@ class SQLiteStore:
                 "INSERT OR REPLACE INTO scenario_runs(scenario_id, payload) VALUES(?, ?)",
                 (run.run_id, payload),
             )
+
+    def clear_all(self) -> None:
+        with self._connect() as conn:
+            conn.execute("DELETE FROM decision_logs")
+            conn.execute("DELETE FROM state_snapshots")
+            conn.execute("DELETE FROM scenario_runs")

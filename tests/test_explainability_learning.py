@@ -4,6 +4,7 @@ from pathlib import Path
 
 from core.memory import SQLiteStore
 from core.state import load_initial_state
+from orchestrator.service import approve_pending_plan
 from simulation.runner import ScenarioRunner
 
 
@@ -54,6 +55,8 @@ def test_repeated_scenario_runs_accumulate_memory_history(tmp_path: Path) -> Non
     initial_prior = state.routes["R1"].risk_score
 
     state = runner.run(state, "route_blockage")
+    if state.pending_plan and state.decision_logs:
+        state = approve_pending_plan(state, store, state.decision_logs[-1].decision_id, True)
     state = runner.run(state, "route_blockage")
 
     assert state.memory is not None

@@ -20,6 +20,9 @@ def render_page(state: SystemState, store: SQLiteStore) -> None:
         st.caption(
             f"Latest decision `{latest.decision_id}` approval status: {latest.approval_status.value}"
         )
+        st.write(f"Latest plan: `{latest.plan_id}`")
+        if state.pending_plan:
+            st.warning("A plan is still pending approval. Resolve it before running new plans or scenarios.")
         st.subheader("Latest Explanation")
         st.write(latest.rationale)
         st.write(f"Approval required: {latest.approval_required}")
@@ -32,11 +35,16 @@ def render_page(state: SystemState, store: SQLiteStore) -> None:
         if latest.rejected_actions:
             st.write("Rejected alternatives")
             st.dataframe(rejected_actions_dataframe(latest), use_container_width=True)
+    else:
+        st.info("No decisions are stored yet.")
     st.subheader("Current Session")
     st.dataframe(decision_log_dataframe(state), use_container_width=True)
     st.subheader("Persisted Logs")
     items = store.list_decision_logs()
-    st.dataframe(pd.DataFrame(items), use_container_width=True)
+    if items:
+        st.dataframe(pd.DataFrame(items), use_container_width=True)
+    else:
+        st.info("No persisted decision logs yet.")
     st.subheader("Learned Memory")
     supplier_df, route_df, scenario_df = memory_summary_tables(state)
     st.write("Supplier reliability")

@@ -4,6 +4,7 @@ import streamlit as st
 
 from core.memory import SQLiteStore
 from core.state import load_initial_state
+from orchestrator.service import reset_runtime
 from ui import decision_log, overview, scenarios, what_if
 
 
@@ -26,8 +27,9 @@ def main() -> None:
         ["Overview", "Scenarios", "Decision Log", "What-if"],
     )
     if st.sidebar.button("Reset State", use_container_width=True):
-        st.session_state["app_state"] = load_initial_state()
+        st.session_state["app_state"] = reset_runtime(store)
         state = st.session_state["app_state"]
+        st.rerun()
 
     if page == "Overview":
         st.session_state["app_state"] = overview.render_page(state, store)
