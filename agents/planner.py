@@ -6,6 +6,11 @@ from actions.executor import simulate_actions
 from agents.base import BaseAgent
 from core.enums import ActionType, ApprovalStatus, PlanStatus
 from core.models import Action, AgentProposal, DecisionLog, Event, Plan, SystemState
+from policies.explainability import (
+    build_plan_summary,
+    build_winning_factors,
+    explain_rejected_actions,
+)
 from policies.guardrails import approval_required
 from policies.scoring import compute_score
 
@@ -53,6 +58,7 @@ class PlannerAgent(BaseAgent):
             mode=state.mode,
             baseline_cost=before_kpis.total_cost,
         )
+        summary = build_plan_summary(before_kpis, simulated.kpis, breakdown)
         plan = Plan(
             plan_id=f"plan_{uuid4().hex[:8]}",
             mode=state.mode,
@@ -60,15 +66,14 @@ class PlannerAgent(BaseAgent):
             actions=selected,
             score=score,
             score_breakdown=breakdown,
-            planner_reasoning=(
-                "selected actions maximize service preservation and recovery speed under the "
-                f"{state.mode.value} policy while keeping risk bounded"
-            ),
+            planner_reasoning=summary,
             status=PlanStatus.PROPOSED,
         )
         needs_approval, reason = approval_required(plan, before_kpis, simulated.kpis, event)
         plan.approval_required = needs_approval
         plan.approval_reason = reason
+        winning_factors = build_winning_factors(selected, before_kpis, simulated.kpis, breakdown)
+        rejection_reasons = explain_rejected_actions(candidate_actions, selected, action_limit)
 
         decision_log = DecisionLog(
             decision_id=f"dec_{uuid4().hex[:8]}",
@@ -77,13 +82,12 @@ class PlannerAgent(BaseAgent):
             before_kpis=before_kpis,
             after_kpis=simulated.kpis,
             selected_actions=[action.action_id for action in selected],
-            rejected_actions=[
-                {"action_id": action.action_id, "reason": "not selected in final plan"}
-                for action in candidate_actions
-                if action.action_id not in {selected_action.action_id for selected_action in selected}
-            ],
+            rejected_actions=rejection_reasons,
             score_breakdown=breakdown,
-            rationale=plan.planner_reasoning,
+            rationale=summary,
+            winning_factors=winning_factors,
+            approval_required=needs_approval,
+            approval_reason=reason if needs_approval else "no approval required: thresholds not triggered",
             approval_status=ApprovalStatus.PENDING if needs_approval else ApprovalStatus.AUTO_APPLIED,
         )
 

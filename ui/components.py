@@ -37,6 +37,8 @@ def decision_log_dataframe(state: SystemState) -> pd.DataFrame:
             {
                 "decision_id": log.decision_id,
                 "plan_id": log.plan_id,
+                "approval_required": log.approval_required,
+                "approval_reason": log.approval_reason,
                 "approval_status": log.approval_status.value,
                 "service_level_after": log.after_kpis.service_level,
                 "total_cost_after": log.after_kpis.total_cost,
@@ -94,4 +96,48 @@ def plan_actions_dataframe(plan: Plan) -> pd.DataFrame:
             }
             for action in plan.actions
         ]
+    )
+
+
+def score_breakdown_dataframe(decision_log: DecisionLog) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"component": component, "contribution": contribution}
+            for component, contribution in decision_log.score_breakdown.items()
+        ]
+    )
+
+
+def rejected_actions_dataframe(decision_log: DecisionLog) -> pd.DataFrame:
+    return pd.DataFrame(decision_log.rejected_actions)
+
+
+def memory_summary_tables(state: SystemState) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    memory = state.memory
+    supplier_rows = []
+    route_rows = []
+    scenario_rows = []
+    if memory:
+        supplier_rows = [
+            {"supplier_id": supplier_id, "learned_reliability": reliability}
+            for supplier_id, reliability in memory.supplier_reliability.items()
+        ]
+        route_rows = [
+            {"route_id": route_id, "disruption_prior": prior}
+            for route_id, prior in memory.route_disruption_priors.items()
+        ]
+        scenario_rows = [
+            {
+                "scenario_id": scenario_id,
+                "runs": details.get("runs", 0),
+                "latest_run_id": details.get("latest_run_id"),
+                "latest_plan_id": details.get("latest_plan_id"),
+                "latest_approval_status": details.get("latest_approval_status"),
+            }
+            for scenario_id, details in memory.scenario_outcomes.items()
+        ]
+    return (
+        pd.DataFrame(supplier_rows),
+        pd.DataFrame(route_rows),
+        pd.DataFrame(scenario_rows),
     )

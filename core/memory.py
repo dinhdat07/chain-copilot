@@ -70,5 +70,5 @@ class SQLiteStore:
         with self._connect() as conn:
             conn.execute(
                 "INSERT OR REPLACE INTO scenario_runs(scenario_id, payload) VALUES(?, ?)",
-                (run.scenario_id, payload),
+                (run.run_id, payload),
             )

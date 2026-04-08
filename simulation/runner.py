@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import time
+from uuid import uuid4
 
 from core.memory import SQLiteStore
 from core.models import ScenarioRun, SystemState
 from core.state import clone_state
 from orchestrator.graph import build_graph
+from simulation.learning import apply_learning
 from simulation.scenarios import get_scenario_events
 
 
@@ -21,6 +23,7 @@ class ScenarioRunner:
         for event in events:
             state = self.graph.invoke(state, event)
         run = ScenarioRun(
+            run_id=f"run_{uuid4().hex[:8]}",
             scenario_id=scenario_name,
             seed=seed,
             events=events,
@@ -30,6 +33,7 @@ class ScenarioRunner:
             status="completed",
         )
         state.scenario_history.append(run)
+        apply_learning(state, run)
         self.store.save_scenario_run(run)
         self.store.save_state(state)
         if state.decision_logs:
