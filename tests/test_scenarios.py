@@ -3,6 +3,14 @@ from core.state import load_initial_state
 from simulation.runner import ScenarioRunner
 
 
+def test_daily_normal_plan_executes_without_disruption() -> None:
+    state = load_initial_state()
+    result = ScenarioRunner().graph.invoke(state, None)
+    assert result.latest_plan is not None
+    assert result.mode == Mode.NORMAL
+    assert result.pending_plan is None
+
+
 def test_supplier_delay_scenario_generates_plan() -> None:
     state = load_initial_state()
     runner = ScenarioRunner()
