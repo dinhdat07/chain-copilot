@@ -4,7 +4,7 @@ import pandas as pd
 import streamlit as st
 
 from core.enums import ActionType, ApprovalStatus, Mode
-from core.models import DecisionLog, Plan, SystemState
+from core.models import DecisionLog, KPIState, Plan, SystemState
 
 
 def render_kpis(state: SystemState) -> None:
@@ -186,6 +186,56 @@ def kpi_comparison_dataframe(decision_log: DecisionLog) -> pd.DataFrame:
                 "after": after.recovery_speed,
                 "delta": round(after.recovery_speed - before.recovery_speed, 4),
             },
+        ]
+    )
+
+
+def kpi_delta_dataframe(before: KPIState, after: KPIState) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "metric": "service_level",
+                "before": before.service_level,
+                "after": after.service_level,
+                "delta": round(after.service_level - before.service_level, 4),
+            },
+            {
+                "metric": "total_cost",
+                "before": before.total_cost,
+                "after": after.total_cost,
+                "delta": round(after.total_cost - before.total_cost, 2),
+            },
+            {
+                "metric": "disruption_risk",
+                "before": before.disruption_risk,
+                "after": after.disruption_risk,
+                "delta": round(after.disruption_risk - before.disruption_risk, 4),
+            },
+            {
+                "metric": "recovery_speed",
+                "before": before.recovery_speed,
+                "after": after.recovery_speed,
+                "delta": round(after.recovery_speed - before.recovery_speed, 4),
+            },
+            {
+                "metric": "stockout_risk",
+                "before": before.stockout_risk,
+                "after": after.stockout_risk,
+                "delta": round(after.stockout_risk - before.stockout_risk, 4),
+            },
+        ]
+    )
+
+
+def kpi_state_dataframe(kpis: KPIState) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"metric": "service_level", "value": kpis.service_level},
+            {"metric": "total_cost", "value": kpis.total_cost},
+            {"metric": "disruption_risk", "value": kpis.disruption_risk},
+            {"metric": "recovery_speed", "value": kpis.recovery_speed},
+            {"metric": "stockout_risk", "value": kpis.stockout_risk},
+            {"metric": "decision_latency_ms", "value": kpis.decision_latency_ms},
         ]
     )
 

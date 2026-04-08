@@ -41,6 +41,7 @@ Increase demo reliability by fixing brittle reset behavior, blocking invalid act
 - [x] Improve Decision Log empty/blocking state clarity.
 - [x] Add a guided control-tower status section for mode, selected plan, and demo progress.
 - [x] Improve scenario descriptions and latest-event presentation for judges.
+- [x] Replace raw JSON plan/KPI dumps with friendlier plan and KPI views.
 - [x] Update the demo script to match the polished flow.
 - [x] Add hardening tests for reset, blocking, and reject behavior.
 - [x] Add helper tests for demo-flow presentation logic.

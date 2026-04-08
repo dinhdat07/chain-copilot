@@ -6,6 +6,7 @@ from core.memory import SQLiteStore
 from core.models import SystemState
 from simulation.runner import ScenarioRunner
 from simulation.scenarios import list_scenarios
+from ui.components import kpi_comparison_dataframe, plan_actions_dataframe, selected_action_summary
 
 
 SCENARIO_DESCRIPTIONS = {
@@ -35,7 +36,24 @@ def render_page(state: SystemState, store: SQLiteStore) -> SystemState:
             st.success(f"Completed scenario: {name}")
     if updated_state.latest_plan:
         st.subheader("Latest Plan")
-        st.json(updated_state.latest_plan.model_dump(mode="json"))
+        latest_plan = updated_state.latest_plan
+        st.caption(
+            f"Plan `{latest_plan.plan_id}` | mode {latest_plan.mode.value} | "
+            f"score {latest_plan.score:.4f} | approval required: {latest_plan.approval_required}"
+        )
+        selected = selected_action_summary(latest_plan)
+        if selected is not None:
+            st.info(
+                f"Selected action: {selected['title']} | {selected['impact']} | {selected['detail']}"
+            )
+        st.dataframe(plan_actions_dataframe(latest_plan), use_container_width=True, hide_index=True)
+    if updated_state.decision_logs:
+        st.subheader("Before vs After KPIs")
+        st.dataframe(
+            kpi_comparison_dataframe(updated_state.decision_logs[-1]),
+            use_container_width=True,
+            hide_index=True,
+        )
     if updated_state.pending_plan and updated_state.decision_logs:
         st.warning(
             "Scenario generated a pending approval plan. Review it from Overview. "
