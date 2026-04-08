@@ -7,7 +7,6 @@ from core.models import DecisionLog, SystemState
 from ui.components import (
     approval_badge_text,
     decision_log_dataframe,
-    decision_log_summary_dataframe,
     memory_summary_tables,
     rejected_actions_dataframe,
     score_breakdown_dataframe,
@@ -26,6 +25,13 @@ def _render_decision_details(log: DecisionLog) -> None:
     if log.rejected_actions:
         st.write("Rejected alternatives")
         st.dataframe(rejected_actions_dataframe(log), width="stretch", hide_index=True)
+
+
+@st.dialog("Persisted Decision Details", width="large")
+def _show_persisted_log_dialog(log: DecisionLog) -> None:
+    st.caption(f"Decision `{log.decision_id}` | Plan `{log.plan_id}`")
+    st.write(approval_badge_text(log))
+    _render_decision_details(log)
 
 
 def render_page(state: SystemState, store: SQLiteStore) -> None:
@@ -52,27 +58,18 @@ def render_page(state: SystemState, store: SQLiteStore) -> None:
     items = store.list_decision_logs()
     if items:
         persisted_logs = [DecisionLog.model_validate(item) for item in items]
-        st.dataframe(decision_log_summary_dataframe(persisted_logs), width="stretch", hide_index=True)
-        if "persisted_decision_id" not in st.session_state:
-            st.session_state["persisted_decision_id"] = persisted_logs[0].decision_id
-        st.write("View details")
+        header = st.columns([2, 2, 2, 1])
+        header[0].markdown("**Decision ID**")
+        header[1].markdown("**Plan ID**")
+        header[2].markdown("**Approval Status**")
+        header[3].markdown("**Action**")
         for log in persisted_logs:
             cols = st.columns([2, 2, 2, 1])
             cols[0].write(log.decision_id)
             cols[1].write(log.plan_id)
             cols[2].write(approval_badge_text(log))
             if cols[3].button("View details", key=f"persisted_{log.decision_id}", width="stretch"):
-                st.session_state["persisted_decision_id"] = log.decision_id
-        selected = next(
-            (
-                log
-                for log in persisted_logs
-                if log.decision_id == st.session_state.get("persisted_decision_id")
-            ),
-            persisted_logs[0],
-        )
-        st.subheader(f"Persisted Decision {selected.decision_id}")
-        _render_decision_details(selected)
+                _show_persisted_log_dialog(log)
     else:
         st.info("No persisted decision logs yet.")
     st.subheader("Learned Memory")

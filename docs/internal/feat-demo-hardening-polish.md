@@ -43,6 +43,7 @@ Increase demo reliability by fixing brittle reset behavior, blocking invalid act
 - [x] Improve scenario descriptions and latest-event presentation for judges.
 - [x] Replace raw JSON plan/KPI dumps with friendlier plan and KPI views.
 - [x] Replace deprecated Streamlit width usage and raw persisted-log table with a friendlier detail flow.
+- [x] Move persisted-log details into per-row table actions with a modal popup.
 - [x] Update the demo script to match the polished flow.
 - [x] Add hardening tests for reset, blocking, and reject behavior.
 - [x] Add helper tests for demo-flow presentation logic.
