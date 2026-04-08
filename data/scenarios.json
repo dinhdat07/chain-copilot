@@ -1,0 +1,18 @@
+{
+  "supplier_delay": {
+    "description": "Primary supplier delay for SKU_1",
+    "event_count": 1
+  },
+  "demand_spike": {
+    "description": "Flash-sale spike on SKU_2",
+    "event_count": 1
+  },
+  "route_blockage": {
+    "description": "Flooding blocks the main route",
+    "event_count": 1
+  },
+  "compound_disruption": {
+    "description": "Supplier delay plus demand spike",
+    "event_count": 2
+  }
+}

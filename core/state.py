@@ -1,0 +1,140 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+
+import pandas as pd
+
+from core.enums import Mode
+from core.models import (
+    InventoryItem,
+    KPIState,
+    MemorySnapshot,
+    OrderRecord,
+    RouteRecord,
+    SupplierRecord,
+    SystemState,
+    WarehouseRecord,
+)
+
+
+DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+def _read_csv(name: str, data_dir: Path | None = None) -> pd.DataFrame:
+    base = data_dir or DATA_DIR
+    return pd.read_csv(base / name)
+
+
+def default_memory() -> MemorySnapshot:
+    return MemorySnapshot(
+        snapshot_id="mem_0",
+        timestamp=utc_now(),
+        supplier_reliability={},
+        route_disruption_priors={},
+        scenario_outcomes={},
+        last_approved_plan_ids=[],
+    )
+
+
+def recompute_kpis(state: SystemState, recovery_speed: float | None = None) -> KPIState:
+    demand = sum(max(item.forecast_qty, 0) for item in state.inventory.values())
+    shortage = sum(
+        max(item.forecast_qty - (item.on_hand + item.incoming_qty), 0)
+        for item in state.inventory.values()
+    )
+    holding_cost = sum(
+        (item.on_hand + item.incoming_qty) * item.unit_cost for item in state.inventory.values()
+    )
+    route_cost = sum(
+        state.routes[item.preferred_route_id].cost
+        for item in state.inventory.values()
+        if item.preferred_route_id in state.routes
+    )
+    total_cost = holding_cost + route_cost + state.extra_cost
+    service_level = 1.0 if demand == 0 else max(0.0, min(1.0, 1.0 - (shortage / demand)))
+    stockout_risk = 0.0 if demand == 0 else max(0.0, min(1.0, shortage / demand))
+    active_risk = [event.severity for event in state.active_events]
+    route_risk = [route.risk_score for route in state.routes.values() if route.status != "blocked"]
+    disruption_risk = 0.0
+    if active_risk or route_risk:
+        disruption_risk = sum(active_risk + route_risk[:2]) / max(len(active_risk + route_risk[:2]), 1)
+        disruption_risk = min(disruption_risk, 1.0)
+    if recovery_speed is None:
+        recovery_speed = 0.85 if state.mode == Mode.NORMAL else 0.55
+    return KPIState(
+        service_level=round(service_level, 4),
+        total_cost=round(total_cost, 2),
+        disruption_risk=round(disruption_risk, 4),
+        recovery_speed=round(max(0.0, min(1.0, recovery_speed)), 4),
+        stockout_risk=round(stockout_risk, 4),
+        decision_latency_ms=state.kpis.decision_latency_ms if getattr(state, "kpis", None) else 0.0,
+    )
+
+
+def load_initial_state(data_dir: Path | None = None) -> SystemState:
+    inventory_df = _read_csv("inventory.csv", data_dir)
+    suppliers_df = _read_csv("suppliers.csv", data_dir)
+    routes_df = _read_csv("routes.csv", data_dir)
+    warehouses_df = _read_csv("warehouses.csv", data_dir)
+    orders_df = _read_csv("orders.csv", data_dir)
+
+    inventory = {
+        row["sku"]: InventoryItem(**row.to_dict())
+        for _, row in inventory_df.iterrows()
+    }
+    suppliers = {
+        row["supplier_id"]: SupplierRecord(**row.to_dict())
+        for _, row in suppliers_df.iterrows()
+    }
+    routes = {
+        row["route_id"]: RouteRecord(**row.to_dict())
+        for _, row in routes_df.iterrows()
+    }
+    warehouses = {
+        row["warehouse_id"]: WarehouseRecord(**row.to_dict())
+        for _, row in warehouses_df.iterrows()
+    }
+    orders = [OrderRecord(**row.to_dict()) for _, row in orders_df.iterrows()]
+
+    state = SystemState(
+        run_id="run_0",
+        timestamp=utc_now(),
+        inventory=inventory,
+        suppliers=suppliers,
+        routes=routes,
+        warehouses=warehouses,
+        orders=orders,
+        kpis=KPIState(
+            service_level=1.0,
+            total_cost=0.0,
+            disruption_risk=0.0,
+            recovery_speed=0.85,
+            stockout_risk=0.0,
+            decision_latency_ms=0.0,
+        ),
+        memory=default_memory(),
+    )
+    state.kpis = recompute_kpis(state)
+    return state
+
+
+def clone_state(state: SystemState) -> SystemState:
+    return state.model_copy(deep=True)
+
+
+def state_summary(state: SystemState) -> dict[str, object]:
+    return {
+        "mode": state.mode.value,
+        "active_events": [event.type.value for event in state.active_events],
+        "inventory_items": len(state.inventory),
+        "suppliers": len(state.suppliers),
+        "routes": len(state.routes),
+        "kpis": state.kpis.model_dump(),
+        "latest_plan_id": state.latest_plan_id,
+        "pending_plan_id": state.pending_plan.plan_id if state.pending_plan else None,
+    }

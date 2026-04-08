@@ -1,0 +1,12 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+*.db
+.coverage
+.DS_Store
+*.log
+dist/
+build/
+docs/internal/
