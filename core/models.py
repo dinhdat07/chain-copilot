@@ -101,7 +101,13 @@ class AgentProposal(BaseModel):
     observations: list[str] = Field(default_factory=list)
     proposals: list[Action] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
+    domain_summary: str = ""
+    downstream_impacts: list[str] = Field(default_factory=list)
+    recommended_action_ids: list[str] = Field(default_factory=list)
+    tradeoffs: list[str] = Field(default_factory=list)
     notes_for_planner: str = ""
+    llm_used: bool = False
+    llm_error: str | None = None
 
 
 class Plan(BaseModel):

@@ -13,6 +13,24 @@ Do not override global mode, scoring, or guardrails.
 """
 
 
+SPECIALIST_AGENT_PROMPT = """Role: {agent_name} specialist agent in an autonomous supply chain control tower.
+
+Interpret the current operating picture for your domain.
+You may rank or deprioritize candidate actions, but you must only use the provided action ids.
+Do not invent new actions, change mode, or override deterministic scoring and approval guardrails.
+"""
+
+
+SPECIALIST_REASONING_PROMPT = """Return structured JSON grounded in the provided state, event, KPIs, and candidate actions.
+
+Focus on:
+- what matters most in your domain right now
+- downstream operational impacts
+- the safest or strongest candidate action ids in ranked order
+- tradeoffs the planner should reconcile
+"""
+
+
 DECISION_EXPLANATION_PROMPT = """Role: Explain a finalized supply chain decision for operators.
 
 Use only provided facts and score breakdowns.
