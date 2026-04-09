@@ -30,6 +30,7 @@ class ScenarioRunner:
             seed=seed,
             events=events,
             result_plan_id=state.latest_plan_id,
+            decision_id=state.decision_logs[-1].decision_id if state.decision_logs else None,
             result_kpis=state.kpis,
             duration_ms=round((time.perf_counter() - started) * 1000.0, 2),
             status="completed",

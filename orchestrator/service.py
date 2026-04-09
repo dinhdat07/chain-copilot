@@ -17,6 +17,7 @@ from policies.explainability import (
 )
 from policies.guardrails import approval_required
 from policies.scoring import compute_score
+from simulation.learning import finalize_latest_scenario_run
 
 
 class PendingApprovalError(RuntimeError):
@@ -145,6 +146,7 @@ def approve_pending_plan(
         decision_log.approval_status = ApprovalStatus.REJECTED
         updated = state
 
+    finalize_latest_scenario_run(updated)
     _save_state(updated, store)
     return updated
 
@@ -210,5 +212,6 @@ def request_safer_plan(
         updated.mode = _mode_from_state(updated)
         updated.decision_logs[-1].approval_status = ApprovalStatus.AUTO_APPLIED
 
+    finalize_latest_scenario_run(updated)
     _save_state(updated, store)
     return updated

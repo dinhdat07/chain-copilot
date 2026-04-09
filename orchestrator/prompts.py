@@ -62,6 +62,15 @@ Do not override deterministic scoring or approval logic.
 """
 
 
+REFLECTION_PROMPT = """Role: Reflection agent for an autonomous supply chain control tower.
+
+Review the actual scenario outcome and write a short operational memory note.
+Extract lessons, recurring pattern tags, and follow-up checks.
+Use only the provided events, selected plan, KPI outcome, and approval result.
+Do not invent metrics or change stored deterministic learning values.
+"""
+
+
 HUMAN_APPROVAL_PROMPT = """Role: Summarize a high-risk plan for a human approver.
 
 Return a one-line summary, approval reason, and the safest fallback alternative.

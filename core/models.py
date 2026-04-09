@@ -175,6 +175,22 @@ class DecisionLog(BaseModel):
     approval_status: ApprovalStatus = ApprovalStatus.NOT_REQUIRED
 
 
+class ReflectionNote(BaseModel):
+    note_id: str
+    run_id: str
+    scenario_id: str
+    plan_id: str | None = None
+    event_types: list[str] = Field(default_factory=list)
+    mode: str
+    approval_status: str
+    summary: str
+    lessons: list[str] = Field(default_factory=list)
+    pattern_tags: list[str] = Field(default_factory=list)
+    follow_up_checks: list[str] = Field(default_factory=list)
+    llm_used: bool = False
+    llm_error: str | None = None
+
+
 class MemorySnapshot(BaseModel):
     snapshot_id: str
     timestamp: datetime
@@ -182,6 +198,8 @@ class MemorySnapshot(BaseModel):
     route_disruption_priors: dict[str, float] = Field(default_factory=dict)
     scenario_outcomes: dict[str, dict[str, Any]] = Field(default_factory=dict)
     last_approved_plan_ids: list[str] = Field(default_factory=list)
+    reflection_notes: list[ReflectionNote] = Field(default_factory=list)
+    pattern_tag_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class ScenarioRun(BaseModel):
@@ -190,8 +208,12 @@ class ScenarioRun(BaseModel):
     seed: int
     events: list[Event]
     result_plan_id: str | None = None
+    decision_id: str | None = None
     result_kpis: KPIState | None = None
     outcome_summary: dict[str, Any] = Field(default_factory=dict)
+    approval_status: str | None = None
+    reflection_status: str = "pending"
+    reflection_note_id: str | None = None
     duration_ms: float = Field(default=0.0, ge=0.0)
     status: str = "pending"
 

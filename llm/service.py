@@ -11,6 +11,8 @@ from core.models import (
     DecisionLog,
     Event,
     Plan,
+    ReflectionNote,
+    ScenarioRun,
     SystemState,
 )
 from llm.config import load_settings
@@ -22,6 +24,7 @@ from orchestrator.prompts import (
     HUMAN_APPROVAL_PROMPT,
     LLM_ENRICHMENT_PROMPT,
     PLANNER_PROMPT,
+    REFLECTION_PROMPT,
     SPECIALIST_AGENT_PROMPT,
     SPECIALIST_REASONING_PROMPT,
 )
@@ -100,6 +103,26 @@ CRITIC_SCHEMA = {
         },
     },
     "required": ["summary", "findings"],
+}
+
+REFLECTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "lessons": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "pattern_tags": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "follow_up_checks": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+    },
+    "required": ["summary", "lessons", "pattern_tags", "follow_up_checks"],
 }
 
 
@@ -220,7 +243,8 @@ def _build_planner_candidates_prompt(
         "Return JSON with candidate_plans containing exactly these strategy_label values: "
         "cost_first, balanced, resilience_first. Only use action ids from candidate_actions."
     )
-    return f"{'\n\n'.join(instructions)}\n\nContext:\n{json.dumps(context, ensure_ascii=True, indent=2)}"
+    instruction_text = "\n\n".join(instructions)
+    return f"{instruction_text}\n\nContext:\n{json.dumps(context, ensure_ascii=True, indent=2)}"
 
 
 def _build_critic_prompt(
@@ -249,6 +273,31 @@ def _build_critic_prompt(
         [
             CRITIC_PROMPT.strip(),
             "Return JSON with keys summary and findings. Keep findings concise and grounded in the evaluated candidates.",
+        ]
+    )
+    return f"{instructions}\n\nContext:\n{json.dumps(context, ensure_ascii=True, indent=2)}"
+
+
+def _build_reflection_prompt(
+    *,
+    state: SystemState,
+    run: ScenarioRun,
+    decision_log: DecisionLog | None,
+) -> str:
+    context = {
+        "scenario_run": run.model_dump(mode="json"),
+        "active_events": [_event_context(item) for item in state.active_events],
+        "current_kpis": state.kpis.model_dump(mode="json"),
+        "latest_plan": state.latest_plan.model_dump(mode="json") if state.latest_plan else None,
+        "latest_decision": decision_log.model_dump(mode="json") if decision_log else None,
+    }
+    instructions = "\n\n".join(
+        [
+            REFLECTION_PROMPT.strip(),
+            (
+                "Return JSON with keys summary, lessons, pattern_tags, follow_up_checks. "
+                "Keep each field concise and grounded in the actual outcome."
+            ),
         ]
     )
     return f"{instructions}\n\nContext:\n{json.dumps(context, ensure_ascii=True, indent=2)}"
@@ -394,6 +443,40 @@ def critique_candidate_plans(
     findings = [str(item).strip() for item in response.get("findings", []) if str(item).strip()]
     used = bool(summary or findings)
     return summary, findings, used, None
+
+
+def generate_reflection_note(
+    *,
+    state: SystemState,
+    run: ScenarioRun,
+    decision_log: DecisionLog | None,
+) -> tuple[ReflectionNote | None, str | None]:
+    prompt = _build_reflection_prompt(
+        state=state,
+        run=run,
+        decision_log=decision_log,
+    )
+    response, _, error = _call_json_model(prompt=prompt, schema=REFLECTION_SCHEMA)
+    if response is None:
+        return None, error
+    note = ReflectionNote(
+        note_id=f"note_{run.run_id}",
+        run_id=run.run_id,
+        scenario_id=run.scenario_id,
+        plan_id=run.result_plan_id,
+        event_types=[event.type.value for event in run.events],
+        mode=state.mode.value,
+        approval_status=run.approval_status or "unknown",
+        summary=str(response.get("summary", "")).strip(),
+        lessons=[str(item).strip() for item in response.get("lessons", []) if str(item).strip()],
+        pattern_tags=[str(item).strip() for item in response.get("pattern_tags", []) if str(item).strip()],
+        follow_up_checks=[
+            str(item).strip() for item in response.get("follow_up_checks", []) if str(item).strip()
+        ],
+        llm_used=True,
+        llm_error=None,
+    )
+    return note, None
 
 
 def _build_prompt(

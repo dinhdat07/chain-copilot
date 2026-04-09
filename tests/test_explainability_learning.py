@@ -40,6 +40,7 @@ def test_scenario_run_persists_learned_memory_to_state_snapshot(tmp_path: Path) 
     assert result.memory is not None
     assert result.memory.supplier_reliability["SUP_A"] < initial_reliability
     assert result.memory.scenario_outcomes["supplier_delay"]["runs"] == 1
+    assert result.scenario_history[-1].reflection_status == "pending_approval"
 
     with sqlite3.connect(store.path) as conn:
         row = conn.execute("SELECT payload FROM state_snapshots WHERE run_id = ?", (result.run_id,)).fetchone()
@@ -58,6 +59,8 @@ def test_repeated_scenario_runs_accumulate_memory_history(tmp_path: Path) -> Non
     if state.pending_plan and state.decision_logs:
         state = approve_pending_plan(state, store, state.decision_logs[-1].decision_id, True)
     state = runner.run(state, "route_blockage")
+    if state.pending_plan and state.decision_logs:
+        state = approve_pending_plan(state, store, state.decision_logs[-1].decision_id, True)
 
     assert state.memory is not None
     history = state.memory.scenario_outcomes["route_blockage"]["history"]
@@ -65,6 +68,8 @@ def test_repeated_scenario_runs_accumulate_memory_history(tmp_path: Path) -> Non
     assert len(history) == 2
     assert state.memory.route_disruption_priors["R1"] > initial_prior
     assert len(state.scenario_history) == 2
+    assert len(state.memory.reflection_notes) == 2
+    assert state.scenario_history[-1].reflection_status == "completed"
 
     with sqlite3.connect(store.path) as conn:
         row_count = conn.execute("SELECT COUNT(*) FROM scenario_runs").fetchone()[0]
