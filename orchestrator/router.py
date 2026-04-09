@@ -20,6 +20,10 @@ def route_after_risk(graph_state: Mapping[str, object]) -> str:
 
 
 def route_after_planner(graph_state: Mapping[str, object]) -> str:
+    return "critic"
+
+
+def route_after_critic(graph_state: Mapping[str, object]) -> str:
     state = _state_from_graph(graph_state)
     if state.latest_plan and state.latest_plan.approval_required:
         return "approval"

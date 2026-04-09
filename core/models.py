@@ -110,6 +110,25 @@ class AgentProposal(BaseModel):
     llm_error: str | None = None
 
 
+class CandidatePlanDraft(BaseModel):
+    strategy_label: str
+    action_ids: list[str] = Field(default_factory=list)
+    rationale: str = ""
+    llm_used: bool = False
+
+
+class CandidatePlanEvaluation(BaseModel):
+    strategy_label: str
+    action_ids: list[str] = Field(default_factory=list)
+    score: float
+    score_breakdown: dict[str, float]
+    projected_kpis: KPIState
+    approval_required: bool = False
+    approval_reason: str = ""
+    rationale: str = ""
+    llm_used: bool = False
+
+
 class Plan(BaseModel):
     plan_id: str
     mode: Mode
@@ -117,10 +136,13 @@ class Plan(BaseModel):
     actions: list[Action] = Field(default_factory=list)
     score: float
     score_breakdown: dict[str, float]
+    strategy_label: str | None = None
+    generated_by: str | None = None
     approval_required: bool = False
     approval_reason: str = ""
     planner_reasoning: str = ""
     llm_planner_narrative: str | None = None
+    critic_summary: str | None = None
     status: PlanStatus = PlanStatus.PROPOSED
 
 
@@ -134,15 +156,22 @@ class DecisionLog(BaseModel):
     rejected_actions: list[dict[str, str]] = Field(default_factory=list)
     score_breakdown: dict[str, float]
     rationale: str
+    candidate_evaluations: list[CandidatePlanEvaluation] = Field(default_factory=list)
+    selection_reason: str = ""
     winning_factors: list[str] = Field(default_factory=list)
     approval_required: bool = False
     approval_reason: str = ""
+    planner_error: str | None = None
     llm_operator_explanation: str | None = None
     llm_approval_summary: str | None = None
     llm_used: bool = False
     llm_provider: str | None = None
     llm_model: str | None = None
     llm_error: str | None = None
+    critic_summary: str | None = None
+    critic_findings: list[str] = Field(default_factory=list)
+    critic_used: bool = False
+    critic_error: str | None = None
     approval_status: ApprovalStatus = ApprovalStatus.NOT_REQUIRED
 
 

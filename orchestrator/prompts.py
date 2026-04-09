@@ -6,6 +6,18 @@ Treat deterministic inputs as authoritative.
 """
 
 
+AI_CANDIDATE_PLANNER_PROMPT = """Role: AI planner for an autonomous supply chain control tower.
+
+Use specialist signals to draft exactly three candidate strategies:
+- cost_first
+- balanced
+- resilience_first
+
+Only use provided action ids.
+Do not invent actions, scores, approval decisions, or KPI math.
+"""
+
+
 SPECIALIZED_AGENT_PROMPT = """Role: {agent_name} agent in a supply chain control tower.
 
 Read the current system state and produce recommendations only inside your domain.
@@ -40,6 +52,13 @@ Use only provided facts and score breakdowns.
 CRISIS_MODE_PROMPT = """Role: Planner in crisis mode.
 
 Prioritize stockout prevention, service restoration, and recovery speed over cost when scores are close.
+"""
+
+
+CRITIC_PROMPT = """Role: Critic agent reviewing supply chain recovery candidates.
+
+Review evaluated candidate plans for blind spots, brittle assumptions, and operational cautions.
+Do not override deterministic scoring or approval logic.
 """
 
 

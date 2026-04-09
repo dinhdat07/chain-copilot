@@ -3,11 +3,22 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from core.models import Action, AgentProposal, DecisionLog, Event, Plan, SystemState
+from core.models import (
+    Action,
+    AgentProposal,
+    CandidatePlanDraft,
+    CandidatePlanEvaluation,
+    DecisionLog,
+    Event,
+    Plan,
+    SystemState,
+)
 from llm.config import load_settings
 from llm.gemini_client import GeminiClient, GeminiClientError
 from orchestrator.prompts import (
     DECISION_EXPLANATION_PROMPT,
+    AI_CANDIDATE_PLANNER_PROMPT,
+    CRITIC_PROMPT,
     HUMAN_APPROVAL_PROMPT,
     LLM_ENRICHMENT_PROMPT,
     PLANNER_PROMPT,
@@ -55,6 +66,40 @@ SPECIALIST_SCHEMA = {
         "tradeoffs",
         "notes_for_planner",
     ],
+}
+
+PLANNER_CANDIDATES_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "candidate_plans": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "strategy_label": {"type": "string"},
+                    "action_ids": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                    },
+                    "rationale": {"type": "string"},
+                },
+                "required": ["strategy_label", "action_ids", "rationale"],
+            },
+        }
+    },
+    "required": ["candidate_plans"],
+}
+
+CRITIC_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "summary": {"type": "string"},
+        "findings": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+    },
+    "required": ["summary", "findings"],
 }
 
 
@@ -132,6 +177,78 @@ def _build_specialist_prompt(
                 "Only reference action_ids that appear in candidate_actions. "
                 "If no action is recommended, return an empty recommended_action_ids array."
             ),
+        ]
+    )
+    return f"{instructions}\n\nContext:\n{json.dumps(context, ensure_ascii=True, indent=2)}"
+
+
+def _build_planner_candidates_prompt(
+    *,
+    state: SystemState,
+    event: Event | None,
+    candidate_actions: list[Action],
+) -> str:
+    context = {
+        "mode": state.mode.value,
+        "active_events": [_event_context(item) for item in state.active_events],
+        "trigger_event": _event_context(event),
+        "kpis": state.kpis.model_dump(mode="json"),
+        "specialist_outputs": {
+            name: {
+                "observations": output.observations,
+                "risks": output.risks,
+                "domain_summary": output.domain_summary,
+                "downstream_impacts": output.downstream_impacts,
+                "recommended_action_ids": output.recommended_action_ids,
+                "tradeoffs": output.tradeoffs,
+                "notes_for_planner": output.notes_for_planner,
+            }
+            for name, output in state.agent_outputs.items()
+            if name != "planner"
+        },
+        "candidate_actions": _action_catalog(candidate_actions),
+    }
+    instructions = [
+        AI_CANDIDATE_PLANNER_PROMPT.strip(),
+        PLANNER_PROMPT.strip(),
+    ]
+    if state.mode.value == "crisis":
+        from orchestrator.prompts import CRISIS_MODE_PROMPT
+
+        instructions.append(CRISIS_MODE_PROMPT.strip())
+    instructions.append(
+        "Return JSON with candidate_plans containing exactly these strategy_label values: "
+        "cost_first, balanced, resilience_first. Only use action ids from candidate_actions."
+    )
+    return f"{'\n\n'.join(instructions)}\n\nContext:\n{json.dumps(context, ensure_ascii=True, indent=2)}"
+
+
+def _build_critic_prompt(
+    *,
+    state: SystemState,
+    event: Event | None,
+    selected_plan: Plan,
+    evaluations: list[CandidatePlanEvaluation],
+) -> str:
+    context = {
+        "mode": state.mode.value,
+        "active_events": [_event_context(item) for item in state.active_events],
+        "trigger_event": _event_context(event),
+        "selected_plan": {
+            "plan_id": selected_plan.plan_id,
+            "strategy_label": selected_plan.strategy_label,
+            "approval_required": selected_plan.approval_required,
+            "approval_reason": selected_plan.approval_reason,
+            "score": selected_plan.score,
+            "score_breakdown": selected_plan.score_breakdown,
+            "action_ids": [action.action_id for action in selected_plan.actions],
+        },
+        "candidate_evaluations": [evaluation.model_dump(mode="json") for evaluation in evaluations],
+    }
+    instructions = "\n\n".join(
+        [
+            CRITIC_PROMPT.strip(),
+            "Return JSON with keys summary and findings. Keep findings concise and grounded in the evaluated candidates.",
         ]
     )
     return f"{instructions}\n\nContext:\n{json.dumps(context, ensure_ascii=True, indent=2)}"
@@ -220,6 +337,63 @@ def enrich_specialist_proposal(
     )
     if not proposal.llm_used and provider:
         proposal.llm_error = proposal.llm_error or f"{provider} returned an empty specialist response"
+
+
+def generate_candidate_plan_drafts(
+    *,
+    state: SystemState,
+    event: Event | None,
+    candidate_actions: list[Action],
+) -> tuple[list[CandidatePlanDraft], str | None]:
+    prompt = _build_planner_candidates_prompt(
+        state=state,
+        event=event,
+        candidate_actions=candidate_actions,
+    )
+    response, _, error = _call_json_model(prompt=prompt, schema=PLANNER_CANDIDATES_SCHEMA)
+    if response is None:
+        return [], error
+
+    allowed_ids = {action.action_id for action in candidate_actions}
+    drafts: list[CandidatePlanDraft] = []
+    for item in response.get("candidate_plans", []):
+        strategy_label = str(item.get("strategy_label", "")).strip()
+        action_ids = _unique_action_ids(
+            [str(value).strip() for value in item.get("action_ids", []) if str(value).strip()],
+            allowed_ids,
+        )
+        rationale = str(item.get("rationale", "")).strip()
+        drafts.append(
+            CandidatePlanDraft(
+                strategy_label=strategy_label,
+                action_ids=action_ids,
+                rationale=rationale,
+                llm_used=True,
+            )
+        )
+    return drafts, None
+
+
+def critique_candidate_plans(
+    *,
+    state: SystemState,
+    event: Event | None,
+    selected_plan: Plan,
+    evaluations: list[CandidatePlanEvaluation],
+) -> tuple[str | None, list[str], bool, str | None]:
+    prompt = _build_critic_prompt(
+        state=state,
+        event=event,
+        selected_plan=selected_plan,
+        evaluations=evaluations,
+    )
+    response, _, error = _call_json_model(prompt=prompt, schema=CRITIC_SCHEMA)
+    if response is None:
+        return None, [], False, error
+    summary = str(response.get("summary", "")).strip() or None
+    findings = [str(item).strip() for item in response.get("findings", []) if str(item).strip()]
+    used = bool(summary or findings)
+    return summary, findings, used, None
 
 
 def _build_prompt(

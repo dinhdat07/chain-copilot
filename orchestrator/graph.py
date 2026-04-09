@@ -4,6 +4,7 @@ import time
 from typing import TypedDict
 
 from actions.executor import apply_plan
+from agents.critic import CriticAgent
 from agents.demand import DemandAgent
 from agents.inventory import InventoryAgent
 from agents.logistics import LogisticsAgent
@@ -14,7 +15,7 @@ from core.enums import ApprovalStatus, Mode, PlanStatus
 from core.models import Event, SystemState
 from core.state import recompute_kpis, utc_now
 from langgraph.graph import END, START, StateGraph
-from orchestrator.router import route_after_planner, route_after_risk
+from orchestrator.router import route_after_critic, route_after_planner, route_after_risk
 
 
 class OrchestrationState(TypedDict):
@@ -31,6 +32,7 @@ class LangGraphControlTower:
         self.supplier_agent = SupplierAgent()
         self.logistics_agent = LogisticsAgent()
         self.planner_agent = PlannerAgent()
+        self.critic_agent = CriticAgent()
         self.graph = self._compile()
 
     def _reset_cycle(self, state: SystemState) -> None:
@@ -88,6 +90,12 @@ class LangGraphControlTower:
         self._record_output(state, output)
         return graph_state
 
+    def critic_node(self, graph_state: OrchestrationState) -> OrchestrationState:
+        state = graph_state["state"]
+        output = self.critic_agent.run(state, graph_state["event"])
+        state.agent_outputs[output.agent] = output
+        return graph_state
+
     def approval_node(self, graph_state: OrchestrationState) -> OrchestrationState:
         state = graph_state["state"]
         state.mode = Mode.APPROVAL
@@ -114,6 +122,7 @@ class LangGraphControlTower:
         graph.add_node("supplier", self.supplier_node)
         graph.add_node("logistics", self.logistics_node)
         graph.add_node("planner", self.planner_node)
+        graph.add_node("critic", self.critic_node)
         graph.add_node("approval", self.approval_node)
         graph.add_node("execution", self.execution_node)
 
@@ -134,6 +143,13 @@ class LangGraphControlTower:
         graph.add_conditional_edges(
             "planner",
             route_after_planner,
+            {
+                "critic": "critic",
+            },
+        )
+        graph.add_conditional_edges(
+            "critic",
+            route_after_critic,
             {
                 "approval": "approval",
                 "execution": "execution",
