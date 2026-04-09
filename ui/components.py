@@ -4,7 +4,25 @@ import pandas as pd
 import streamlit as st
 
 from core.enums import ActionType, ApprovalStatus, Mode
-from core.models import DecisionLog, KPIState, Plan, SystemState
+from core.models import CandidatePlanEvaluation, DecisionLog, KPIState, Plan, ReflectionNote, SystemState
+
+
+PIPELINE_NODES = [
+    ("risk", "Risk Agent"),
+    ("demand", "Demand Agent"),
+    ("inventory", "Inventory Agent"),
+    ("supplier", "Supplier Agent"),
+    ("logistics", "Logistics Agent"),
+    ("planner", "Planner Agent"),
+    ("critic", "Critic Agent"),
+    ("decision_engine", "Decision Engine"),
+    ("approval_gate", "Approval Gate"),
+    ("execution", "Execution"),
+    ("reflection_memory", "Reflection / Memory"),
+]
+
+
+PIPELINE_LABELS = {key: label for key, label in PIPELINE_NODES}
 
 
 def render_kpis(state: SystemState) -> None:
@@ -323,3 +341,299 @@ def approval_badge_text(decision_log: DecisionLog | None) -> str:
     if decision_log.approval_status == ApprovalStatus.PENDING:
         return "Approval pending"
     return f"Approval {decision_log.approval_status.value.replace('_', ' ')}"
+
+
+def pipeline_node_labels() -> dict[str, str]:
+    return PIPELINE_LABELS.copy()
+
+
+def _latest_decision(state: SystemState) -> DecisionLog | None:
+    return state.decision_logs[-1] if state.decision_logs else None
+
+
+def _latest_reflection_note(state: SystemState) -> ReflectionNote | None:
+    if state.memory and state.memory.reflection_notes:
+        return state.memory.reflection_notes[-1]
+    return None
+
+
+def _latest_scenario_run(state: SystemState):
+    return state.scenario_history[-1] if state.scenario_history else None
+
+
+def pipeline_node_status_map(state: SystemState) -> dict[str, dict[str, str]]:
+    latest_decision = _latest_decision(state)
+    latest_run = _latest_scenario_run(state)
+    crisis_like = state.mode in {Mode.CRISIS, Mode.APPROVAL}
+    statuses: dict[str, dict[str, str]] = {}
+    for key, label in PIPELINE_NODES:
+        active = False
+        tone = "idle"
+        detail = "No activity yet."
+        if key in state.agent_outputs:
+            active = True
+            tone = "crisis" if crisis_like else "normal"
+            detail = state.agent_outputs[key].domain_summary or state.agent_outputs[key].notes_for_planner or "Agent executed this cycle."
+        elif key == "decision_engine" and latest_decision is not None:
+            active = True
+            tone = "approval" if latest_decision.approval_required else ("crisis" if crisis_like else "normal")
+            detail = latest_decision.selection_reason or "Deterministic scoring selected the final plan."
+        elif key == "approval_gate" and latest_decision is not None:
+            active = latest_decision.approval_required or latest_decision.approval_status == ApprovalStatus.PENDING
+            if latest_decision.approval_status == ApprovalStatus.PENDING:
+                tone = "approval"
+                detail = latest_decision.approval_reason or "Waiting for operator approval."
+            elif latest_decision.approval_required:
+                tone = "executed"
+                detail = approval_badge_text(latest_decision)
+        elif key == "execution" and latest_decision is not None:
+            active = latest_decision.approval_status in {
+                ApprovalStatus.AUTO_APPLIED,
+                ApprovalStatus.APPROVED,
+            }
+            if active:
+                tone = "executed"
+                detail = f"Executed {len(latest_decision.selected_actions)} selected action(s)."
+        elif key == "reflection_memory" and latest_run is not None:
+            active = True
+            if latest_run.reflection_status == "completed":
+                tone = "learning"
+                detail = "Outcome captured and reflection memory written."
+            elif latest_run.reflection_status == "pending_approval":
+                tone = "approval"
+                detail = "Learning is waiting for approval before final reflection."
+            else:
+                tone = "idle"
+                detail = "Scenario history updated without finalized reflection."
+        statuses[key] = {
+            "label": label,
+            "active": "yes" if active else "no",
+            "tone": tone,
+            "detail": detail,
+        }
+    return statuses
+
+
+def pipeline_graph_source(state: SystemState) -> str:
+    statuses = pipeline_node_status_map(state)
+    fill_map = {
+        "idle": "#e5e7eb",
+        "normal": "#d1fae5",
+        "crisis": "#fde68a",
+        "approval": "#fecaca",
+        "executed": "#bfdbfe",
+        "learning": "#ddd6fe",
+    }
+    lines = [
+        "digraph ChainCopilot {",
+        'rankdir=LR;',
+        'graph [fontname="Helvetica", bgcolor="transparent", nodesep="0.4", ranksep="0.6"];',
+        'node [shape=box, style="rounded,filled", fontname="Helvetica", color="#1f2937", penwidth=1.5];',
+        'edge [color="#6b7280", penwidth=1.4, arrowsize=0.8];',
+    ]
+    for key, label in PIPELINE_NODES:
+        tone = statuses[key]["tone"]
+        detail = statuses[key]["detail"].replace('"', "'")
+        fill = fill_map[tone]
+        border = "#111827" if statuses[key]["active"] == "yes" else "#9ca3af"
+        node_label = f"{label}\\n{detail[:48]}"
+        lines.append(
+            f'{key} [label="{node_label}", fillcolor="{fill}", color="{border}"];'
+        )
+
+    lines.extend(
+        [
+            "risk -> demand -> inventory -> supplier -> logistics -> planner -> critic -> decision_engine;",
+            'decision_engine -> approval_gate [label="high risk", color="#dc2626"];',
+            'decision_engine -> execution [label="auto apply", color="#2563eb"];',
+            'approval_gate -> execution [label="approved", color="#ea580c"];',
+            'execution -> reflection_memory [label="learn", color="#7c3aed"];',
+        ]
+    )
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def candidate_plan_dataframe(state: SystemState) -> pd.DataFrame:
+    latest_decision = _latest_decision(state)
+    selected_strategy = state.latest_plan.strategy_label if state.latest_plan else None
+    if latest_decision is None or not latest_decision.candidate_evaluations:
+        return pd.DataFrame(
+            columns=[
+                "strategy",
+                "selected",
+                "score",
+                "service_level",
+                "total_cost",
+                "disruption_risk",
+                "recovery_speed",
+                "approval_required",
+                "source",
+                "rationale",
+            ]
+        )
+    rows = []
+    for evaluation in latest_decision.candidate_evaluations:
+        rows.append(
+            {
+                "strategy": evaluation.strategy_label,
+                "selected": evaluation.strategy_label == selected_strategy,
+                "score": evaluation.score,
+                "service_level": evaluation.projected_kpis.service_level,
+                "total_cost": evaluation.projected_kpis.total_cost,
+                "disruption_risk": evaluation.projected_kpis.disruption_risk,
+                "recovery_speed": evaluation.projected_kpis.recovery_speed,
+                "approval_required": evaluation.approval_required,
+                "source": "AI" if evaluation.llm_used else "Fallback",
+                "rationale": evaluation.rationale,
+            }
+        )
+    return pd.DataFrame(rows)
+
+
+def candidate_score_breakdown_dataframe(evaluation: CandidatePlanEvaluation) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {"component": component, "contribution": contribution}
+            for component, contribution in evaluation.score_breakdown.items()
+        ]
+    )
+
+
+def reflection_timeline_dataframe(state: SystemState) -> pd.DataFrame:
+    memory = state.memory
+    if memory is None or not memory.reflection_notes:
+        return pd.DataFrame(columns=["run_id", "scenario_id", "approval_status", "summary", "tags"])
+    return pd.DataFrame(
+        [
+            {
+                "run_id": note.run_id,
+                "scenario_id": note.scenario_id,
+                "approval_status": note.approval_status,
+                "summary": note.summary,
+                "tags": ", ".join(note.pattern_tags),
+            }
+            for note in reversed(memory.reflection_notes)
+        ]
+    )
+
+
+def latest_reflection_snapshot(state: SystemState) -> dict[str, object] | None:
+    note = _latest_reflection_note(state)
+    if note is None:
+        return None
+    return {
+        "summary": note.summary,
+        "lessons": note.lessons,
+        "pattern_tags": note.pattern_tags,
+        "follow_up_checks": note.follow_up_checks,
+        "approval_status": note.approval_status,
+        "llm_used": note.llm_used,
+        "llm_error": note.llm_error,
+    }
+
+
+def _agent_output_block(state: SystemState, node_key: str) -> tuple[str, list[str], list[str], list[str], bool, str | None]:
+    output = state.agent_outputs.get(node_key)
+    if output is None:
+        return "", [], [], [], False, None
+    summary = output.domain_summary or output.notes_for_planner
+    factors = output.downstream_impacts or output.observations
+    actions = output.recommended_action_ids
+    tradeoffs = output.tradeoffs or output.risks
+    return summary, factors, actions, tradeoffs, output.llm_used, output.llm_error
+
+
+def agent_node_payload(state: SystemState, node_key: str) -> dict[str, object]:
+    latest_decision = _latest_decision(state)
+    latest_run = _latest_scenario_run(state)
+    latest_note = _latest_reflection_note(state)
+    labels = pipeline_node_labels()
+    mode_label = mode_summary(state)["label"]
+    active_events = ", ".join(event.type.value for event in state.active_events) or "none"
+    base_inputs = [
+        {"field": "Mode", "value": mode_label},
+        {"field": "Active events", "value": active_events},
+        {"field": "Service level", "value": f"{state.kpis.service_level:.1%}"},
+        {"field": "Disruption risk", "value": f"{state.kpis.disruption_risk:.1%}"},
+    ]
+    summary = ""
+    factors: list[str] = []
+    actions: list[str] = []
+    tradeoffs: list[str] = []
+    llm_used = False
+    llm_error: str | None = None
+    reasoning_source = "No reasoning captured yet."
+
+    if node_key in {"risk", "demand", "inventory", "supplier", "logistics", "planner", "critic"}:
+        summary, factors, actions, tradeoffs, llm_used, llm_error = _agent_output_block(state, node_key)
+        reasoning_source = "AI-assisted reasoning" if llm_used else "Deterministic or fallback reasoning"
+    elif node_key == "decision_engine" and latest_decision is not None:
+        summary = latest_decision.selection_reason or "Decision engine selected the highest-scoring plan."
+        factors = latest_decision.winning_factors
+        actions = latest_decision.selected_actions
+        tradeoffs = [latest_decision.approval_reason] if latest_decision.approval_reason else []
+        reasoning_source = "Deterministic policy engine"
+    elif node_key == "approval_gate" and latest_decision is not None:
+        summary = latest_decision.approval_reason or "No approval required."
+        factors = [approval_badge_text(latest_decision)]
+        if latest_decision.llm_approval_summary:
+            tradeoffs = [latest_decision.llm_approval_summary]
+            llm_used = True
+        reasoning_source = "Human approval guardrail"
+    elif node_key == "execution" and state.latest_plan is not None:
+        summary = (
+            f"Applied strategy {state.latest_plan.strategy_label or 'n/a'} with status {state.latest_plan.status.value}."
+        )
+        actions = [action.action_id for action in state.latest_plan.actions]
+        factors = [selected_action_summary(state.latest_plan)["detail"]] if selected_action_summary(state.latest_plan) else []
+        reasoning_source = "Deterministic execution guards"
+    elif node_key == "reflection_memory":
+        if latest_note is not None:
+            summary = latest_note.summary
+            factors = latest_note.lessons
+            actions = latest_note.pattern_tags
+            tradeoffs = latest_note.follow_up_checks
+            llm_used = latest_note.llm_used
+            llm_error = latest_note.llm_error
+            reasoning_source = "AI reflection memory" if llm_used else "Deterministic reflection fallback"
+        elif latest_run is not None:
+            summary = f"Latest run is {latest_run.reflection_status}."
+            factors = [latest_run.scenario_id]
+            reasoning_source = "Reflection pending final outcome"
+
+    extra_inputs = list(base_inputs)
+    if node_key == "planner" and latest_decision is not None:
+        extra_inputs.extend(
+            [
+                {"field": "Candidate plans", "value": str(len(latest_decision.candidate_evaluations))},
+                {"field": "Selected strategy", "value": state.latest_plan.strategy_label if state.latest_plan else "n/a"},
+                {"field": "Planner source", "value": state.latest_plan.generated_by if state.latest_plan else "n/a"},
+            ]
+        )
+    elif node_key == "critic" and latest_decision is not None:
+        extra_inputs.extend(
+            [
+                {"field": "Selected strategy", "value": state.latest_plan.strategy_label if state.latest_plan else "n/a"},
+                {"field": "Critic used", "value": "yes" if latest_decision.critic_used else "no"},
+            ]
+        )
+    elif node_key == "reflection_memory" and latest_run is not None:
+        extra_inputs.extend(
+            [
+                {"field": "Latest scenario", "value": latest_run.scenario_id},
+                {"field": "Reflection status", "value": latest_run.reflection_status},
+            ]
+        )
+
+    return {
+        "title": labels[node_key],
+        "input_summary": pd.DataFrame(extra_inputs),
+        "summary": summary or "No detailed summary recorded for this node.",
+        "key_factors": factors,
+        "recommended_actions": actions,
+        "tradeoffs": tradeoffs,
+        "reasoning_source": reasoning_source,
+        "llm_used": llm_used,
+        "llm_error": llm_error,
+    }
