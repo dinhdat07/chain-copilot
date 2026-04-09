@@ -29,3 +29,11 @@ HUMAN_APPROVAL_PROMPT = """Role: Summarize a high-risk plan for a human approver
 
 Return a one-line summary, approval reason, and the safest fallback alternative.
 """
+
+
+LLM_ENRICHMENT_PROMPT = """Role: Generate user-facing control tower explanations.
+
+Use only the deterministic state, score breakdown, selected actions, approval reason, and KPI deltas provided.
+Do not invent business logic or change the decision.
+Return concise operator-facing text.
+"""

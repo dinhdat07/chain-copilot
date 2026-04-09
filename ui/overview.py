@@ -58,6 +58,9 @@ def render_page(state: SystemState, store: SQLiteStore) -> SystemState:
             st.info(
                 f"Selected action: {selected['title']} | {selected['impact']} | {selected['detail']}"
             )
+        if plan.llm_planner_narrative:
+            st.write("AI planner narrative")
+            st.write(plan.llm_planner_narrative)
         st.dataframe(plan_actions_dataframe(plan), width="stretch", hide_index=True)
 
     if updated_state.pending_plan and updated_state.decision_logs:
@@ -65,6 +68,10 @@ def render_page(state: SystemState, store: SQLiteStore) -> SystemState:
         st.subheader("Pending Approval")
         st.info(f"System is blocked by pending decision `{decision_id}` until it is resolved.")
         st.warning(updated_state.pending_plan.approval_reason or "Manual approval required.")
+        approval_summary = updated_state.decision_logs[-1].llm_approval_summary
+        if approval_summary:
+            st.write("AI approval summary")
+            st.write(approval_summary)
         approve_col, reject_col, safer_col = st.columns(3)
         if approve_col.button("Approve plan", width="stretch"):
             updated_state = approve_pending_plan(updated_state, store, decision_id, True)

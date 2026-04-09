@@ -8,6 +8,7 @@ from core.enums import ActionType, ApprovalStatus, Mode, PlanStatus
 from core.memory import SQLiteStore
 from core.models import Action, DecisionLog, Event, Plan, SystemState
 from core.state import load_initial_state
+from llm.service import enrich_plan_and_decision
 from orchestrator.graph import build_graph
 from policies.explainability import (
     build_plan_summary,
@@ -187,6 +188,12 @@ def request_safer_plan(
             else "no approval required: thresholds not triggered"
         ),
         approval_status=ApprovalStatus.PENDING if safer_plan.approval_required else ApprovalStatus.AUTO_APPLIED,
+    )
+    enrich_plan_and_decision(
+        state=state,
+        event=_latest_event(state),
+        plan=safer_plan,
+        decision_log=new_decision,
     )
 
     state.latest_plan = safer_plan

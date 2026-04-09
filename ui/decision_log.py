@@ -15,8 +15,18 @@ from ui.components import (
 
 def _render_decision_details(log: DecisionLog) -> None:
     st.write(log.rationale)
+    if log.llm_operator_explanation:
+        st.write("AI operator explanation")
+        st.write(log.llm_operator_explanation)
+    elif log.llm_error:
+        st.caption(f"AI explanation unavailable. Deterministic fallback in use. Error: {log.llm_error}")
+    else:
+        st.caption("AI explanation not used. Deterministic fallback in use.")
     st.write(f"Approval required: {log.approval_required}")
     st.write(f"Approval reason: {log.approval_reason}")
+    if log.llm_approval_summary:
+        st.write("AI approval summary")
+        st.write(log.llm_approval_summary)
     st.dataframe(score_breakdown_dataframe(log), width="stretch", hide_index=True)
     if log.winning_factors:
         st.write("Winning factors")

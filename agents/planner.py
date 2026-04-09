@@ -6,6 +6,7 @@ from actions.executor import simulate_actions
 from agents.base import BaseAgent
 from core.enums import ActionType, ApprovalStatus, PlanStatus
 from core.models import Action, AgentProposal, DecisionLog, Event, Plan, SystemState
+from llm.service import enrich_plan_and_decision
 from policies.explainability import (
     build_plan_summary,
     build_winning_factors,
@@ -89,6 +90,12 @@ class PlannerAgent(BaseAgent):
             approval_required=needs_approval,
             approval_reason=reason if needs_approval else "no approval required: thresholds not triggered",
             approval_status=ApprovalStatus.PENDING if needs_approval else ApprovalStatus.AUTO_APPLIED,
+        )
+        enrich_plan_and_decision(
+            state=state,
+            event=event,
+            plan=plan,
+            decision_log=decision_log,
         )
 
         state.latest_plan = plan

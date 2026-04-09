@@ -114,6 +114,7 @@ class Plan(BaseModel):
     approval_required: bool = False
     approval_reason: str = ""
     planner_reasoning: str = ""
+    llm_planner_narrative: str | None = None
     status: PlanStatus = PlanStatus.PROPOSED
 
 
@@ -130,6 +131,12 @@ class DecisionLog(BaseModel):
     winning_factors: list[str] = Field(default_factory=list)
     approval_required: bool = False
     approval_reason: str = ""
+    llm_operator_explanation: str | None = None
+    llm_approval_summary: str | None = None
+    llm_used: bool = False
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    llm_error: str | None = None
     approval_status: ApprovalStatus = ApprovalStatus.NOT_REQUIRED
 
 
