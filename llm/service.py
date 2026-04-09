@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from core.models import (
@@ -171,6 +172,109 @@ def _action_catalog(actions: list[Action]) -> list[dict[str, Any]]:
     ]
 
 
+def _normalize_text(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.strip().lower())
+
+
+def _normalize_strategy_label(raw_value: str, rationale: str = "") -> str:
+    value = raw_value.strip().lower()
+    normalized = _normalize_text(raw_value)
+    rationale_normalized = _normalize_text(rationale)
+    if value in {"cost_first", "balanced", "resilience_first"}:
+        return value
+    alias_map = {
+        "costfirst": "cost_first",
+        "costoptimized": "cost_first",
+        "costplan": "cost_first",
+        "plana": "cost_first",
+        "strategya": "cost_first",
+        "optiona": "cost_first",
+        "balanced": "balanced",
+        "balancedplan": "balanced",
+        "planb": "balanced",
+        "strategyb": "balanced",
+        "optionb": "balanced",
+        "resiliencefirst": "resilience_first",
+        "resilientfirst": "resilience_first",
+        "resilienceplan": "resilience_first",
+        "planc": "resilience_first",
+        "strategyc": "resilience_first",
+        "optionc": "resilience_first",
+    }
+    if normalized in alias_map:
+        return alias_map[normalized]
+    if "cost" in normalized:
+        return "cost_first"
+    if "balanc" in normalized:
+        return "balanced"
+    if "resilien" in normalized or "recover" in normalized:
+        return "resilience_first"
+    if "cost" in rationale_normalized:
+        return "cost_first"
+    if "balance" in rationale_normalized:
+        return "balanced"
+    if any(token in rationale_normalized for token in {"resilien", "recover", "service", "stockout"}):
+        return "resilience_first"
+    return raw_value.strip().lower()
+
+
+def _action_aliases(action: Action) -> set[str]:
+    aliases = {
+        action.action_id,
+        action.action_id.lower(),
+        _normalize_text(action.action_id),
+        action.target_id.lower(),
+        _normalize_text(action.target_id),
+        f"{action.action_type.value}:{action.target_id}".lower(),
+        _normalize_text(f"{action.action_type.value}:{action.target_id}"),
+        _normalize_text(f"{action.action_type.value} {action.target_id}"),
+        _normalize_text(action.reason),
+    }
+    supplier_id = action.parameters.get("supplier_id")
+    route_id = action.parameters.get("route_id")
+    quantity = action.parameters.get("quantity")
+    if supplier_id:
+        aliases.add(str(supplier_id).lower())
+        aliases.add(_normalize_text(str(supplier_id)))
+        aliases.add(_normalize_text(f"{action.target_id} {supplier_id}"))
+    if route_id:
+        aliases.add(str(route_id).lower())
+        aliases.add(_normalize_text(str(route_id)))
+        aliases.add(_normalize_text(f"{action.target_id} {route_id}"))
+    if quantity is not None:
+        aliases.add(_normalize_text(f"{action.target_id} {quantity}"))
+    return {alias for alias in aliases if alias}
+
+
+def _action_alias_map(candidate_actions: list[Action]) -> dict[str, str]:
+    alias_map: dict[str, str] = {}
+    for action in candidate_actions:
+        for alias in _action_aliases(action):
+            alias_map.setdefault(alias, action.action_id)
+    return alias_map
+
+
+def _extract_candidate_action_refs(item: dict[str, Any]) -> list[str]:
+    refs: list[str] = []
+    direct_fields = [
+        item.get("action_ids"),
+        item.get("recommended_action_ids"),
+        item.get("selected_actions"),
+        item.get("actions"),
+    ]
+    for field in direct_fields:
+        if isinstance(field, list):
+            for value in field:
+                if isinstance(value, dict):
+                    for key in ("action_id", "id", "ref", "name"):
+                        if value.get(key):
+                            refs.append(str(value[key]))
+                            break
+                elif value is not None:
+                    refs.append(str(value))
+    return refs
+
+
 def _build_specialist_prompt(
     *,
     agent_name: str,
@@ -242,6 +346,12 @@ def _build_planner_candidates_prompt(
     instructions.append(
         "Return JSON with candidate_plans containing exactly these strategy_label values: "
         "cost_first, balanced, resilience_first. Only use action ids from candidate_actions."
+    )
+    instructions.append(
+        "Allowed planner output shape example: "
+        '{"candidate_plans":[{"strategy_label":"cost_first","action_ids":["act_x"],"rationale":"..."},'
+        '{"strategy_label":"balanced","action_ids":["act_y"],"rationale":"..."},'
+        '{"strategy_label":"resilience_first","action_ids":["act_z"],"rationale":"..."}]}'
     )
     instruction_text = "\n\n".join(instructions)
     return f"{instruction_text}\n\nContext:\n{json.dumps(context, ensure_ascii=True, indent=2)}"
@@ -404,14 +514,20 @@ def generate_candidate_plan_drafts(
         return [], error
 
     allowed_ids = {action.action_id for action in candidate_actions}
+    alias_map = _action_alias_map(candidate_actions)
     drafts: list[CandidatePlanDraft] = []
     for item in response.get("candidate_plans", []):
-        strategy_label = str(item.get("strategy_label", "")).strip()
+        rationale = str(item.get("rationale", "")).strip()
+        strategy_label = _normalize_strategy_label(str(item.get("strategy_label", "")).strip(), rationale)
+        extracted_refs = _extract_candidate_action_refs(item)
         action_ids = _unique_action_ids(
-            [str(value).strip() for value in item.get("action_ids", []) if str(value).strip()],
+            [
+                alias_map.get(candidate_ref, alias_map.get(_normalize_text(candidate_ref), candidate_ref))
+                for candidate_ref in extracted_refs
+                if candidate_ref.strip()
+            ],
             allowed_ids,
         )
-        rationale = str(item.get("rationale", "")).strip()
         drafts.append(
             CandidatePlanDraft(
                 strategy_label=strategy_label,

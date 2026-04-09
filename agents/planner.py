@@ -111,11 +111,11 @@ def _normalize_drafts(
     drafts: list[CandidatePlanDraft],
     candidate_actions: list[Action],
     action_limit: int,
-) -> tuple[list[CandidatePlanDraft], bool]:
+) -> tuple[list[CandidatePlanDraft], int]:
     allowed_ids = {action.action_id for action in candidate_actions}
     by_id = {action.action_id: action for action in candidate_actions}
     normalized: list[CandidatePlanDraft] = []
-    fallback_used = False
+    repaired_count = 0
     fallback_map = {draft.strategy_label: draft for draft in _fallback_drafts(candidate_actions, action_limit)}
     draft_map = {draft.strategy_label: draft for draft in drafts if draft.strategy_label in STRATEGY_ORDER}
 
@@ -123,7 +123,7 @@ def _normalize_drafts(
         draft = draft_map.get(strategy_label)
         if draft is None:
             normalized.append(fallback_map[strategy_label])
-            fallback_used = True
+            repaired_count += 1
             continue
         action_ids = [action_id for action_id in draft.action_ids if action_id in allowed_ids]
         selected_actions = _dedupe_actions(
@@ -132,7 +132,7 @@ def _normalize_drafts(
         )
         if not selected_actions:
             normalized.append(fallback_map[strategy_label])
-            fallback_used = True
+            repaired_count += 1
             continue
         normalized.append(
             CandidatePlanDraft(
@@ -142,7 +142,7 @@ def _normalize_drafts(
                 llm_used=draft.llm_used,
             )
         )
-    return normalized, fallback_used
+    return normalized, repaired_count
 
 
 def _evaluate_candidate(
@@ -240,7 +240,8 @@ class PlannerAgent(BaseAgent):
             event=event,
             candidate_actions=candidate_actions,
         )
-        drafts, fallback_used = _normalize_drafts(llm_drafts, candidate_actions, action_limit)
+        drafts, repaired_count = _normalize_drafts(llm_drafts, candidate_actions, action_limit)
+        fallback_used = repaired_count > 0
         if fallback_used and not planner_error:
             planner_error = "planner returned incomplete or invalid candidate plans"
 
@@ -275,7 +276,13 @@ class PlannerAgent(BaseAgent):
             score=selected_evaluation.score,
             score_breakdown=selected_evaluation.score_breakdown,
             strategy_label=selected_evaluation.strategy_label,
-            generated_by="llm_planner" if not fallback_used else "hybrid_fallback",
+            generated_by=(
+                "llm_planner"
+                if repaired_count == 0
+                else "llm_planner_repaired"
+                if repaired_count < len(STRATEGY_ORDER)
+                else "hybrid_fallback"
+            ),
             approval_required=selected_evaluation.approval_required,
             approval_reason=selected_evaluation.approval_reason if selected_evaluation.approval_required else "",
             planner_reasoning=summary,
@@ -321,7 +328,9 @@ class PlannerAgent(BaseAgent):
             f"built {plan.plan_id} using {plan.strategy_label} with score {plan.score:.4f}"
         )
         if fallback_used and planner_error:
-            proposal.risks.append(f"planner fallback used: {planner_error}")
+            proposal.risks.append(
+                f"planner {'repair' if repaired_count < len(STRATEGY_ORDER) else 'fallback'} used: {planner_error}"
+            )
         proposal.domain_summary = plan.generated_by or ""
         proposal.notes_for_planner = decision_log.selection_reason
         proposal.llm_used = any(evaluation.llm_used for evaluation in evaluations)

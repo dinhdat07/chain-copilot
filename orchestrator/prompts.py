@@ -15,6 +15,7 @@ Use specialist signals to draft exactly three candidate strategies:
 
 Only use provided action ids.
 Do not invent actions, scores, approval decisions, or KPI math.
+Return concise rationales and keep each strategy distinct.
 """
 
 
