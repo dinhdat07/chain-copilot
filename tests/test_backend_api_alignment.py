@@ -67,8 +67,13 @@ def test_trace_and_plan_endpoints_expose_latest_daily_plan(tmp_path: Path) -> No
 
     assert trace_response.status_code == 200
     trace_payload = trace_response.json()["item"]
+    assert trace_payload["trace_id"] is not None
+    assert trace_payload["status"] == "completed"
     assert trace_payload["current_branch"] == "normal"
+    assert trace_payload["terminal_stage"] == "execution"
     assert [step["agent"] for step in trace_payload["steps"]][:2] == ["risk", "demand"]
+    assert trace_payload["route_decisions"][0]["from_node"] == "risk"
+    assert trace_payload["route_decisions"][-1]["to_node"] == "execution"
     assert trace_payload["latest_plan"]["plan_id"] == plan_payload["plan_id"]
 
 
@@ -87,6 +92,15 @@ def test_pending_approval_and_unified_approval_command(tmp_path: Path) -> None:
     assert pending_payload["decision_id"] == decision_id
     assert pending_payload["plan"]["approval_required"] is True
 
+    trace_response = client.get("/api/v1/trace/latest")
+    assert trace_response.status_code == 200
+    trace_payload = trace_response.json()["item"]
+    assert trace_payload["current_branch"] == "crisis"
+    assert trace_payload["terminal_stage"] == "approval"
+    assert trace_payload["approval_pending"] is True
+    assert trace_payload["execution_status"] == "pending_approval"
+    assert trace_payload["route_decisions"][-1]["to_node"] == "approval"
+
     approve_response = client.post(
         f"/api/v1/approvals/{decision_id}",
         json={"action": "approve"},
@@ -95,6 +109,23 @@ def test_pending_approval_and_unified_approval_command(tmp_path: Path) -> None:
     approve_payload = approve_response.json()
     assert approve_payload["approval_action"] == "approve"
     assert approve_payload["pending_plan"] is None
+
+
+def test_crisis_trace_records_critic_and_candidate_metadata(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    scenario_response = client.post("/api/v1/scenarios/run", json={"scenario_name": "route_blockage"})
+    assert scenario_response.status_code == 200
+
+    trace_response = client.get("/api/v1/trace/latest")
+    assert trace_response.status_code == 200
+    trace_payload = trace_response.json()["item"]
+    assert trace_payload["candidate_count"] == 3
+    assert trace_payload["selected_strategy"] in {"cost_first", "balanced", "resilience_first"}
+    assert "critic" in [step["agent"] for step in trace_payload["steps"]]
+    critic_step = next(step for step in trace_payload["steps"] if step["agent"] == "critic")
+    assert critic_step["status"] == "completed"
+    assert "finding_count" in critic_step["output_snapshot"]
 
 
 def test_decision_detail_and_reflections_contract(tmp_path: Path) -> None:

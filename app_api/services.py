@@ -7,7 +7,7 @@ from fastapi import HTTPException
 
 from core.enums import ApprovalStatus
 from core.memory import SQLiteStore
-from core.models import Action, AgentProposal, DecisionLog, Event, Plan, SystemState
+from core.models import Action, DecisionLog, Event, Plan, SystemState
 from core.state import clone_state, load_initial_state, recompute_kpis, state_summary, utc_now
 from orchestrator.graph import build_graph
 from orchestrator.service import (
@@ -35,6 +35,7 @@ from app_api.schemas import (
     PendingApprovalView,
     PlanView,
     ReflectionView,
+    RouteDecisionView,
     ScenarioOutcomeView,
     SupplierRowView,
     TraceView,
@@ -408,46 +409,86 @@ def pending_approval_view(state: SystemState) -> PendingApprovalView | None:
 
 
 def latest_trace_view(state: SystemState) -> TraceView:
-    step_order = ["risk", "demand", "inventory", "supplier", "logistics", "planner", "critic"]
-    steps: list[AgentStepView] = []
-    for agent_name in step_order:
-        output: AgentProposal | None = state.agent_outputs.get(agent_name)
-        if output is None:
-            continue
-        summary = output.domain_summary or output.notes_for_planner or "; ".join(output.observations[:2]) or "no summary"
-        steps.append(
-            AgentStepView(
-                agent=agent_name,
-                summary=summary,
-                observations=output.observations,
-                risks=output.risks,
-                downstream_impacts=output.downstream_impacts,
-                recommended_action_ids=output.recommended_action_ids,
-                tradeoffs=output.tradeoffs,
-                llm_used=output.llm_used,
-                llm_error=output.llm_error,
-            )
+    trace = state.latest_trace
+    latest_decision = state.decision_logs[-1] if state.decision_logs else None
+    latest_event = state.active_events[-1] if state.active_events else None
+    if trace is None:
+        return TraceView(
+            mode=state.mode.value,
+            current_branch=state.mode.value,
+            event=event_view(latest_event) if latest_event else None,
+            latest_plan=plan_view(state.latest_plan),
+            decision_id=latest_decision.decision_id if latest_decision else None,
+            selected_strategy=state.latest_plan.strategy_label if state.latest_plan else None,
+            candidate_count=len(latest_decision.candidate_evaluations) if latest_decision else 0,
+            selection_reason=latest_decision.selection_reason if latest_decision else None,
+            candidate_evaluations=(
+                [candidate_evaluation_view(item) for item in latest_decision.candidate_evaluations]
+                if latest_decision
+                else []
+            ),
+            approval_pending=state.pending_plan is not None,
+            approval_reason=latest_decision.approval_reason if latest_decision else "",
+            critic_summary=latest_decision.critic_summary if latest_decision else None,
         )
 
-    latest_decision = state.decision_logs[-1] if state.decision_logs else None
-    current_branch = "approval" if state.pending_plan else "execution"
-    if state.mode.value == "normal" and state.pending_plan is None:
-        current_branch = "normal"
-    latest_event = state.active_events[-1] if state.active_events else None
+    steps = [
+        AgentStepView(
+            agent=step.node_key,
+            node_type=step.node_type,
+            status=step.status,
+            started_at=step.started_at,
+            completed_at=step.completed_at,
+            mode_snapshot=step.mode_snapshot,
+            summary=step.summary,
+            reasoning_source=step.reasoning_source,
+            input_snapshot=step.input_snapshot,
+            output_snapshot=step.output_snapshot,
+            observations=step.observations,
+            risks=step.risks,
+            downstream_impacts=step.downstream_impacts,
+            recommended_action_ids=step.recommended_action_ids,
+            tradeoffs=step.tradeoffs,
+            llm_used=step.llm_used,
+            llm_error=step.llm_error,
+        )
+        for step in trace.steps
+    ]
     return TraceView(
+        trace_id=trace.trace_id,
+        status=trace.status,
+        started_at=trace.started_at,
+        completed_at=trace.completed_at,
+        mode_before=trace.mode_before,
+        mode_after=trace.mode_after,
         mode=state.mode.value,
-        current_branch=current_branch,
-        event=event_view(latest_event) if latest_event else None,
+        current_branch=trace.current_branch,
+        terminal_stage=trace.terminal_stage,
+        event=event_view(trace.event) if trace.event else event_view(latest_event) if latest_event else None,
+        route_decisions=[
+            RouteDecisionView(
+                from_node=item.from_node,
+                outcome=item.outcome,
+                to_node=item.to_node,
+                reason=item.reason,
+            )
+            for item in trace.route_decisions
+        ],
         steps=steps,
         latest_plan=plan_view(state.latest_plan),
-        decision_id=latest_decision.decision_id if latest_decision else None,
-        selection_reason=latest_decision.selection_reason if latest_decision else None,
+        decision_id=trace.decision_id or latest_decision.decision_id if latest_decision else trace.decision_id,
+        selected_strategy=trace.selected_strategy or (state.latest_plan.strategy_label if state.latest_plan else None),
+        candidate_count=trace.candidate_count,
+        selection_reason=trace.selection_reason or (latest_decision.selection_reason if latest_decision else None),
         candidate_evaluations=(
             [candidate_evaluation_view(item) for item in latest_decision.candidate_evaluations]
             if latest_decision
             else []
         ),
-        approval_pending=state.pending_plan is not None,
+        approval_pending=trace.approval_pending,
+        approval_reason=trace.approval_reason,
+        execution_status=trace.execution_status,
+        critic_summary=trace.critic_summary or (latest_decision.critic_summary if latest_decision else None),
     )
 
 

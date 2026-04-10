@@ -174,7 +174,15 @@ class SupplierRowView(BaseModel):
 
 class AgentStepView(BaseModel):
     agent: str
+    node_type: str
+    status: str
+    started_at: datetime
+    completed_at: datetime | None = None
+    mode_snapshot: str
     summary: str
+    reasoning_source: str = ""
+    input_snapshot: dict[str, Any] = Field(default_factory=dict)
+    output_snapshot: dict[str, Any] = Field(default_factory=dict)
     observations: list[str] = Field(default_factory=list)
     risks: list[str] = Field(default_factory=list)
     downstream_impacts: list[str] = Field(default_factory=list)
@@ -184,16 +192,36 @@ class AgentStepView(BaseModel):
     llm_error: str | None = None
 
 
+class RouteDecisionView(BaseModel):
+    from_node: str
+    outcome: str
+    to_node: str
+    reason: str = ""
+
+
 class TraceView(BaseModel):
+    trace_id: str | None = None
+    status: str = "idle"
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+    mode_before: str | None = None
+    mode_after: str | None = None
     mode: str
     current_branch: str
+    terminal_stage: str | None = None
     event: EventView | None = None
+    route_decisions: list[RouteDecisionView] = Field(default_factory=list)
     steps: list[AgentStepView] = Field(default_factory=list)
     latest_plan: PlanView | None = None
     decision_id: str | None = None
+    selected_strategy: str | None = None
+    candidate_count: int = 0
     selection_reason: str | None = None
     candidate_evaluations: list[CandidateEvaluationView] = Field(default_factory=list)
     approval_pending: bool = False
+    approval_reason: str = ""
+    execution_status: str | None = None
+    critic_summary: str | None = None
 
 
 class ReflectionView(BaseModel):

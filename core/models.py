@@ -191,6 +191,57 @@ class ReflectionNote(BaseModel):
     llm_error: str | None = None
 
 
+class TraceRouteDecision(BaseModel):
+    from_node: str
+    outcome: str
+    to_node: str
+    reason: str = ""
+
+
+class TraceStep(BaseModel):
+    node_key: str
+    node_type: str
+    status: str = "running"
+    started_at: datetime
+    completed_at: datetime | None = None
+    mode_snapshot: str
+    input_snapshot: dict[str, Any] = Field(default_factory=dict)
+    output_snapshot: dict[str, Any] = Field(default_factory=dict)
+    summary: str = ""
+    reasoning_source: str = ""
+    observations: list[str] = Field(default_factory=list)
+    risks: list[str] = Field(default_factory=list)
+    downstream_impacts: list[str] = Field(default_factory=list)
+    recommended_action_ids: list[str] = Field(default_factory=list)
+    tradeoffs: list[str] = Field(default_factory=list)
+    llm_used: bool = False
+    llm_error: str | None = None
+
+
+class OrchestrationTrace(BaseModel):
+    trace_id: str
+    run_id: str
+    started_at: datetime
+    completed_at: datetime | None = None
+    mode_before: str
+    mode_after: str | None = None
+    current_branch: str = "normal"
+    terminal_stage: str | None = None
+    status: str = "running"
+    event: Event | None = None
+    route_decisions: list[TraceRouteDecision] = Field(default_factory=list)
+    steps: list[TraceStep] = Field(default_factory=list)
+    decision_id: str | None = None
+    selected_plan_id: str | None = None
+    selected_strategy: str | None = None
+    candidate_count: int = 0
+    selection_reason: str | None = None
+    approval_pending: bool = False
+    approval_reason: str = ""
+    execution_status: str | None = None
+    critic_summary: str | None = None
+
+
 class MemorySnapshot(BaseModel):
     snapshot_id: str
     timestamp: datetime
@@ -235,6 +286,7 @@ class SystemState(BaseModel):
     decision_logs: list[DecisionLog] = Field(default_factory=list)
     candidate_actions: list[Action] = Field(default_factory=list)
     agent_outputs: dict[str, AgentProposal] = Field(default_factory=dict)
+    latest_trace: OrchestrationTrace | None = None
     memory: MemorySnapshot | None = None
     scenario_history: list[ScenarioRun] = Field(default_factory=list)
     extra_cost: float = Field(default=0.0, ge=0.0)
