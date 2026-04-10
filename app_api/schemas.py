@@ -90,6 +90,7 @@ class CandidateEvaluationView(BaseModel):
 
 class PlanView(BaseModel):
     plan_id: str
+    decision_id: str | None = None
     mode: str
     status: str
     score: float
@@ -98,6 +99,7 @@ class PlanView(BaseModel):
     generated_by: str | None = None
     approval_required: bool = False
     approval_reason: str = ""
+    approval_status: str = "not_required"
     planner_reasoning: str = ""
     llm_planner_narrative: str | None = None
     critic_summary: str | None = None
@@ -109,7 +111,42 @@ class PendingApprovalView(BaseModel):
     decision_id: str
     approval_status: str
     approval_reason: str
+    allowed_actions: list[str] = Field(default_factory=lambda: ["approve", "reject", "safer_plan"])
+    blocking_operations: list[str] = Field(default_factory=lambda: ["plan_daily", "scenario_run"])
+    selection_reason: str = ""
+    selected_actions: list[str] = Field(default_factory=list)
+    before_kpis: KPIView
+    projected_kpis: KPIView
+    candidate_count: int = 0
     plan: PlanView
+
+
+class ApprovalDetailView(BaseModel):
+    decision_id: str
+    plan_id: str
+    approval_required: bool
+    approval_status: str
+    approval_reason: str
+    is_pending: bool = False
+    allowed_actions: list[str] = Field(default_factory=list)
+    selection_reason: str = ""
+    selected_actions: list[str] = Field(default_factory=list)
+    event_ids: list[str] = Field(default_factory=list)
+    before_kpis: KPIView
+    after_kpis: KPIView
+    candidate_count: int = 0
+    plan: PlanView
+
+
+class ApprovalCommandResultResponse(BaseModel):
+    decision_id: str
+    action: str
+    approval_status: str
+    message: str
+    latest_plan: PlanView | None = None
+    pending_approval: PendingApprovalView | None = None
+    latest_trace: "TraceView | None" = None
+    summary: "ControlTowerSummaryResponse | None" = None
 
 
 class DecisionLogSummaryView(BaseModel):
@@ -292,6 +329,10 @@ class PendingApprovalResponse(BaseModel):
     item: PendingApprovalView | None = None
 
 
+class ApprovalDetailResponse(BaseModel):
+    item: ApprovalDetailView
+
+
 class DecisionLogListResponse(BaseModel):
     items: list[DecisionLogSummaryView]
 
@@ -315,3 +356,6 @@ class ErrorResponse(BaseModel):
     message: str
     details: dict[str, Any] = Field(default_factory=dict)
     retryable: bool = False
+
+
+ApprovalCommandResultResponse.model_rebuild()

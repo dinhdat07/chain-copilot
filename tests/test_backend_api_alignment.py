@@ -91,6 +91,16 @@ def test_pending_approval_and_unified_approval_command(tmp_path: Path) -> None:
     assert pending_payload is not None
     assert pending_payload["decision_id"] == decision_id
     assert pending_payload["plan"]["approval_required"] is True
+    assert pending_payload["allowed_actions"] == ["approve", "reject", "safer_plan"]
+    assert pending_payload["blocking_operations"] == ["plan_daily", "scenario_run"]
+    assert pending_payload["candidate_count"] == 3
+
+    detail_response = client.get(f"/api/v1/approvals/{decision_id}")
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.json()["item"]
+    assert detail_payload["is_pending"] is True
+    assert detail_payload["approval_status"] == "pending"
+    assert detail_payload["allowed_actions"] == ["approve", "reject", "safer_plan"]
 
     trace_response = client.get("/api/v1/trace/latest")
     assert trace_response.status_code == 200
@@ -107,8 +117,44 @@ def test_pending_approval_and_unified_approval_command(tmp_path: Path) -> None:
     )
     assert approve_response.status_code == 200
     approve_payload = approve_response.json()
-    assert approve_payload["approval_action"] == "approve"
-    assert approve_payload["pending_plan"] is None
+    assert approve_payload["action"] == "approve"
+    assert approve_payload["approval_status"] == "approved"
+    assert approve_payload["pending_approval"] is None
+    assert approve_payload["latest_plan"]["approval_status"] == "approved"
+    assert approve_payload["latest_trace"]["execution_status"] == "approved_and_applied"
+
+
+def test_reject_and_safer_plan_transitions_are_explicit(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    scenario_response = client.post("/api/v1/scenarios/run", json={"scenario_name": "compound_disruption"})
+    assert scenario_response.status_code == 200
+    decision_id = scenario_response.json()["decision_id"]
+    assert decision_id is not None
+
+    safer_response = client.post(
+        f"/api/v1/approvals/{decision_id}",
+        json={"action": "safer_plan"},
+    )
+    assert safer_response.status_code == 200
+    safer_payload = safer_response.json()
+    assert safer_payload["action"] == "safer_plan"
+    assert safer_payload["pending_approval"] is not None or safer_payload["approval_status"] == "auto_applied"
+    assert safer_payload["latest_trace"]["execution_status"] in {"safer_plan_pending", "safer_plan_auto_applied"}
+
+    latest_decision_id = safer_payload["decision_id"]
+    if safer_payload["pending_approval"] is not None:
+        reject_response = client.post(
+            f"/api/v1/approvals/{latest_decision_id}",
+            json={"action": "reject"},
+        )
+        assert reject_response.status_code == 200
+        reject_payload = reject_response.json()
+        assert reject_payload["action"] == "reject"
+        assert reject_payload["approval_status"] == "rejected"
+        assert reject_payload["pending_approval"] is None
+        assert reject_payload["latest_trace"]["execution_status"] == "rejected"
+        assert reject_payload["summary"]["pending_approval"] is None
 
 
 def test_crisis_trace_records_critic_and_candidate_metadata(tmp_path: Path) -> None:

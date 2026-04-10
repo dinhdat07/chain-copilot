@@ -6,8 +6,8 @@ from uuid import uuid4
 from actions.executor import apply_plan, simulate_actions
 from core.enums import ActionType, ApprovalStatus, Mode, PlanStatus
 from core.memory import SQLiteStore
-from core.models import Action, DecisionLog, Event, Plan, SystemState
-from core.state import load_initial_state
+from core.models import Action, DecisionLog, Event, Plan, SystemState, TraceRouteDecision, TraceStep
+from core.state import load_initial_state, utc_now
 from llm.service import enrich_plan_and_decision
 from orchestrator.graph import build_graph
 from policies.explainability import (
@@ -54,6 +54,55 @@ def _current_pending_decision(state: SystemState, decision_id: str) -> DecisionL
 
 def _mode_from_state(state: SystemState) -> Mode:
     return Mode.CRISIS if state.active_events else Mode.NORMAL
+
+
+def _append_approval_trace(
+    state: SystemState,
+    *,
+    outcome: str,
+    to_node: str,
+    summary: str,
+    execution_status: str,
+    decision_id: str | None,
+    approval_pending: bool,
+) -> None:
+    if state.latest_trace is None:
+        return
+    now = utc_now()
+    state.latest_trace.current_branch = "approval"
+    state.latest_trace.route_decisions.append(
+        TraceRouteDecision(
+            from_node="approval",
+            outcome=outcome,
+            to_node=to_node,
+            reason=summary,
+        )
+    )
+    state.latest_trace.steps.append(
+        TraceStep(
+            node_key="approval_resolution",
+            node_type="human_gate",
+            status="completed",
+            started_at=now,
+            completed_at=now,
+            mode_snapshot=state.mode.value,
+            summary=summary,
+            reasoning_source="human_approval_action",
+            output_snapshot={
+                "decision_id": decision_id,
+                "action": outcome,
+                "execution_status": execution_status,
+                "approval_pending": approval_pending,
+            },
+        )
+    )
+    state.latest_trace.decision_id = decision_id
+    state.latest_trace.approval_pending = approval_pending
+    state.latest_trace.execution_status = execution_status
+    state.latest_trace.terminal_stage = "approval" if approval_pending or to_node == "closed" else "execution"
+    state.latest_trace.mode_after = state.mode.value
+    state.latest_trace.completed_at = now
+    state.latest_trace.status = "completed"
 
 
 def _safer_action_key(action: Action) -> tuple[bool, float, float, float, float]:
@@ -139,12 +188,30 @@ def approve_pending_plan(
             updated.latest_plan.status = PlanStatus.APPLIED
         updated.mode = _mode_from_state(updated)
         updated.decision_logs[-1].approval_status = ApprovalStatus.APPROVED
+        _append_approval_trace(
+            updated,
+            outcome="approve",
+            to_node="execution",
+            summary="operator approved the pending plan and execution was applied",
+            execution_status="approved_and_applied",
+            decision_id=decision_log.decision_id,
+            approval_pending=False,
+        )
     else:
         pending_plan.status = PlanStatus.REJECTED
         state.pending_plan = None
         state.mode = _mode_from_state(state)
         decision_log.approval_status = ApprovalStatus.REJECTED
         updated = state
+        _append_approval_trace(
+            updated,
+            outcome="reject",
+            to_node="closed",
+            summary="operator rejected the pending plan; no actions were applied",
+            execution_status="rejected",
+            decision_id=decision_log.decision_id,
+            approval_pending=False,
+        )
 
     finalize_latest_scenario_run(updated)
     _save_state(updated, store)
@@ -206,11 +273,29 @@ def request_safer_plan(
         state.pending_plan = safer_plan
         state.mode = Mode.APPROVAL
         updated = state
+        _append_approval_trace(
+            updated,
+            outcome="safer_plan",
+            to_node="approval",
+            summary="operator requested a safer plan and a new approval candidate was generated",
+            execution_status="safer_plan_pending",
+            decision_id=new_decision.decision_id,
+            approval_pending=True,
+        )
     else:
         safer_plan.status = PlanStatus.APPLIED
         updated = apply_plan(state, safer_plan)
         updated.mode = _mode_from_state(updated)
         updated.decision_logs[-1].approval_status = ApprovalStatus.AUTO_APPLIED
+        _append_approval_trace(
+            updated,
+            outcome="safer_plan",
+            to_node="execution",
+            summary="operator requested a safer plan and the fallback plan auto-applied without approval",
+            execution_status="safer_plan_auto_applied",
+            decision_id=new_decision.decision_id,
+            approval_pending=False,
+        )
 
     finalize_latest_scenario_run(updated)
     _save_state(updated, store)

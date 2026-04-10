@@ -22,8 +22,10 @@ from simulation.scenarios import get_scenario_events, list_scenarios
 
 from app_api.schemas import (
     ActionView,
-    AgentStepView,
+    ApprovalCommandResultResponse,
+    ApprovalDetailView,
     AlertView,
+    AgentStepView,
     CandidateEvaluationView,
     ControlTowerStateResponse,
     ControlTowerSummaryResponse,
@@ -182,6 +184,15 @@ def kpi_view(kpis) -> KPIView:
     return KPIView(**kpis.model_dump())
 
 
+def _decision_for_plan(state: SystemState, plan: Plan | None) -> DecisionLog | None:
+    if plan is None:
+        return None
+    for item in reversed(state.decision_logs):
+        if item.plan_id == plan.plan_id:
+            return item
+    return None
+
+
 def action_view(action: Action) -> ActionView:
     return ActionView(
         action_id=action.action_id,
@@ -197,11 +208,12 @@ def action_view(action: Action) -> ActionView:
     )
 
 
-def plan_view(plan: Plan | None) -> PlanView | None:
+def plan_view(plan: Plan | None, decision: DecisionLog | None = None) -> PlanView | None:
     if plan is None:
         return None
     return PlanView(
         plan_id=plan.plan_id,
+        decision_id=decision.decision_id if decision else None,
         mode=plan.mode.value,
         status=plan.status.value,
         score=plan.score,
@@ -210,12 +222,18 @@ def plan_view(plan: Plan | None) -> PlanView | None:
         generated_by=plan.generated_by,
         approval_required=plan.approval_required,
         approval_reason=plan.approval_reason,
+        approval_status=decision.approval_status.value if decision else ApprovalStatus.NOT_REQUIRED.value,
         planner_reasoning=plan.planner_reasoning,
         llm_planner_narrative=plan.llm_planner_narrative,
         critic_summary=plan.critic_summary,
         trigger_event_ids=plan.trigger_event_ids,
         actions=[action_view(item) for item in plan.actions],
     )
+
+
+def latest_plan_view(state: SystemState) -> PlanView | None:
+    plan = state.pending_plan or state.latest_plan
+    return plan_view(plan, _decision_for_plan(state, plan))
 
 
 def event_view(event: Event) -> EventView:
@@ -404,7 +422,72 @@ def pending_approval_view(state: SystemState) -> PendingApprovalView | None:
         decision_id=decision.decision_id,
         approval_status=decision.approval_status.value,
         approval_reason=decision.approval_reason,
-        plan=plan_view(state.pending_plan),
+        selection_reason=decision.selection_reason,
+        selected_actions=decision.selected_actions,
+        before_kpis=kpi_view(decision.before_kpis),
+        projected_kpis=kpi_view(decision.after_kpis),
+        candidate_count=len(decision.candidate_evaluations),
+        plan=plan_view(state.pending_plan, decision),
+    )
+
+
+def approval_detail_view(state: SystemState, decision_id: str) -> ApprovalDetailView:
+    decision = find_decision(state, decision_id)
+    plan = state.pending_plan if state.pending_plan and state.pending_plan.plan_id == decision.plan_id else state.latest_plan
+    if plan is None or plan.plan_id != decision.plan_id:
+        plan = None
+    pending = state.pending_plan is not None and state.pending_plan.plan_id == decision.plan_id
+    return ApprovalDetailView(
+        decision_id=decision.decision_id,
+        plan_id=decision.plan_id,
+        approval_required=decision.approval_required,
+        approval_status=decision.approval_status.value,
+        approval_reason=decision.approval_reason,
+        is_pending=pending,
+        allowed_actions=["approve", "reject", "safer_plan"] if pending else [],
+        selection_reason=decision.selection_reason,
+        selected_actions=decision.selected_actions,
+        event_ids=decision.event_ids,
+        before_kpis=kpi_view(decision.before_kpis),
+        after_kpis=kpi_view(decision.after_kpis),
+        candidate_count=len(decision.candidate_evaluations),
+        plan=plan_view(plan, decision)
+        if plan is not None
+        else PlanView(
+            plan_id=decision.plan_id,
+            decision_id=decision.decision_id,
+            mode=state.mode.value,
+            status="unknown",
+            score=0.0,
+            score_breakdown=decision.score_breakdown,
+            approval_required=decision.approval_required,
+            approval_reason=decision.approval_reason,
+            approval_status=decision.approval_status.value,
+        ),
+    )
+
+
+def approval_command_result_view(
+    state: SystemState,
+    *,
+    decision_id: str,
+    action: str,
+) -> ApprovalCommandResultResponse:
+    message_map = {
+        "approve": "Pending plan approved and applied.",
+        "reject": "Pending plan rejected.",
+        "safer_plan": "Safer plan requested.",
+    }
+    decision = find_decision(state, decision_id)
+    return ApprovalCommandResultResponse(
+        decision_id=decision.decision_id,
+        action=action,
+        approval_status=decision.approval_status.value,
+        message=message_map.get(action, "Approval action processed."),
+        latest_plan=latest_plan_view(state),
+        pending_approval=pending_approval_view(state),
+        latest_trace=latest_trace_view(state),
+        summary=control_tower_summary(state),
     )
 
 
@@ -417,7 +500,7 @@ def latest_trace_view(state: SystemState) -> TraceView:
             mode=state.mode.value,
             current_branch=state.mode.value,
             event=event_view(latest_event) if latest_event else None,
-            latest_plan=plan_view(state.latest_plan),
+            latest_plan=latest_plan_view(state),
             decision_id=latest_decision.decision_id if latest_decision else None,
             selected_strategy=state.latest_plan.strategy_label if state.latest_plan else None,
             candidate_count=len(latest_decision.candidate_evaluations) if latest_decision else 0,
@@ -475,7 +558,7 @@ def latest_trace_view(state: SystemState) -> TraceView:
             for item in trace.route_decisions
         ],
         steps=steps,
-        latest_plan=plan_view(state.latest_plan),
+        latest_plan=latest_plan_view(state),
         decision_id=trace.decision_id or latest_decision.decision_id if latest_decision else trace.decision_id,
         selected_strategy=trace.selected_strategy or (state.latest_plan.strategy_label if state.latest_plan else None),
         candidate_count=trace.candidate_count,
@@ -543,7 +626,7 @@ def control_tower_summary(state: SystemState) -> ControlTowerSummaryResponse:
         kpis=kpi_view(state.kpis),
         alerts=alerts(state),
         active_events=[event_view(event) for event in state.active_events],
-        latest_plan=plan_view(state.latest_plan),
+        latest_plan=latest_plan_view(state),
         pending_approval=pending_approval_view(state),
         decision_count=len(state.decision_logs),
         scenario_history_count=len(state.scenario_history),

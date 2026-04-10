@@ -5,6 +5,8 @@ from collections.abc import Callable
 from fastapi import APIRouter, HTTPException
 
 from app_api.schemas import (
+    ApprovalCommandResultResponse,
+    ApprovalDetailResponse,
     ApprovalCommandRequest,
     ControlTowerStateResponse,
     ControlTowerSummaryResponse,
@@ -23,6 +25,8 @@ from app_api.schemas import (
     WhatIfRequest,
 )
 from app_api.services import (
+    approval_command_result_view,
+    approval_detail_view,
     ControlTowerRuntime,
     build_event_from_request,
     control_tower_state,
@@ -81,14 +85,17 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
         runtime = runtime_getter()
         return PendingApprovalResponse(item=pending_approval_view(runtime.state))
 
-    @router.post("/approvals/{decision_id}")
-    def approval_command(decision_id: str, request: ApprovalCommandRequest) -> dict:
+    @router.get("/approvals/{decision_id}", response_model=ApprovalDetailResponse)
+    def get_approval(decision_id: str) -> ApprovalDetailResponse:
+        runtime = runtime_getter()
+        return ApprovalDetailResponse(item=approval_detail_view(runtime.state, decision_id))
+
+    @router.post("/approvals/{decision_id}", response_model=ApprovalCommandResultResponse)
+    def approval_command(decision_id: str, request: ApprovalCommandRequest) -> ApprovalCommandResultResponse:
         runtime = runtime_getter()
         runtime.approval_command(decision_id, request.action)
-        payload = runtime.legacy_response_payload()
-        payload["approved"] = request.action == "approve"
-        payload["approval_action"] = request.action
-        return payload
+        resolved_decision_id = runtime.current_decision_id() or decision_id
+        return approval_command_result_view(runtime.state, decision_id=resolved_decision_id, action=request.action)
 
     @router.get("/decision-logs", response_model=DecisionLogListResponse)
     def get_decision_logs() -> DecisionLogListResponse:
