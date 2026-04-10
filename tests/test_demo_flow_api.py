@@ -11,10 +11,13 @@ from simulation.runner import ScenarioRunner
 
 
 def _reset_api_state(tmp_path: Path) -> TestClient:
-    api.STORE = SQLiteStore(tmp_path / "chaincopilot-test.db")
-    api.STATE = load_initial_state()
-    api.GRAPH = build_graph()
-    api.RUNNER = ScenarioRunner(store=api.STORE)
+    store = SQLiteStore(tmp_path / "chaincopilot-test.db")
+    api.replace_runtime(
+        store=store,
+        state=load_initial_state(),
+        graph=build_graph(),
+        runner=ScenarioRunner(store=store),
+    )
     return TestClient(api.app)
 
 
@@ -50,7 +53,7 @@ def test_approval_endpoint_applies_pending_plan(tmp_path: Path) -> None:
     assert payload["pending_plan"] is None
     assert payload["latest_plan"] is not None
     assert payload["latest_plan"]["status"] == PlanStatus.APPLIED.value
-    assert api.STATE.decision_logs[-1].approval_status == ApprovalStatus.APPROVED
+    assert api.RUNTIME.state.decision_logs[-1].approval_status == ApprovalStatus.APPROVED
 
 
 def test_safer_plan_endpoint_creates_new_pending_plan(tmp_path: Path) -> None:
@@ -70,8 +73,8 @@ def test_safer_plan_endpoint_creates_new_pending_plan(tmp_path: Path) -> None:
     assert payload["pending_plan"]["plan_id"] != initial_plan_id
     assert payload["decision_id"] != initial_decision_id
     assert len(payload["pending_plan"]["actions"]) <= 1
-    assert api.STATE.decision_logs[-2].approval_status == ApprovalStatus.REJECTED
-    assert api.STATE.decision_logs[-1].approval_status in {
+    assert api.RUNTIME.state.decision_logs[-2].approval_status == ApprovalStatus.REJECTED
+    assert api.RUNTIME.state.decision_logs[-1].approval_status in {
         ApprovalStatus.PENDING,
         ApprovalStatus.AUTO_APPLIED,
     }
