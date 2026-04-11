@@ -1,4 +1,51 @@
-sku,on_hand,incoming_qty,reorder_point,safety_stock,unit_cost,preferred_supplier_id,preferred_route_id,warehouse_id,forecast_qty
-SKU_1,70,10,50,20,11.0,SUP_A,R1,WH_NORTH,45
-SKU_2,35,5,40,15,9.5,SUP_C,R2,WH_SOUTH,34
-SKU_3,28,4,25,10,13.0,SUP_E,R3,WH_NORTH,22
+sku,name,category,on_hand,incoming_qty,reorder_point,safety_stock,unit_cost,preferred_supplier_id,preferred_route_id,warehouse_id,forecast_qty
+SKU_001,High-Performance Processor V6,Electronics,23,18,23,11,317.7,SUP_D,R3,WH_WEST,86
+SKU_002,Advanced Cooling System V6,Components,32,1,24,18,436.7,SUP_B,R4,WH_WEST,25
+SKU_003,Precision Motherboard V3,Electronics,22,39,21,20,188.43,SUP_D,R3,WH_SOUTH,85
+SKU_004,High-Speed RAM V5,Electronics,57,31,45,15,42.66,SUP_C,R4,WH_WEST,58
+SKU_005,Solid State Drive V8,Storage,40,21,33,18,341.61,SUP_A,R4,WH_SOUTH,86
+SKU_006,Hard Disk Drive V9,Storage,56,4,48,15,46.91,SUP_B,R2,WH_WEST,56
+SKU_007,Power Supply Unit V3,Components,143,25,26,12,311.72,SUP_B,R1,WH_WEST,56
+SKU_008,Graphics Processing Unit V1,Electronics,97,38,26,19,292.71,SUP_D,R4,WH_EAST,74
+SKU_009,Full Tower Case V9,Components,24,28,44,19,391.33,SUP_A,R4,WH_WEST,60
+SKU_010,Liquid Cooling Kit V5,Components,52,18,32,16,24.54,SUP_E,R3,WH_EAST,63
+SKU_011,Mechanical Keyboard V8,Peripherals,81,5,49,11,396.9,SUP_D,R4,WH_WEST,85
+SKU_012,Optical Gaming Mouse V3,Peripherals,115,27,46,20,241.52,SUP_C,R4,WH_NORTH,46
+SKU_013,4K Monitor V1,Peripherals,52,15,32,18,54.07,SUP_C,R4,WH_NORTH,44
+SKU_014,Wireless Router V9,Networking,128,37,25,13,310.67,SUP_E,R4,WH_NORTH,24
+SKU_015,Network Switch V7,Networking,25,32,23,15,61.7,SUP_A,R1,WH_SOUTH,88
+SKU_016,External Hard Drive V3,Storage,44,26,44,20,277.25,SUP_A,R4,WH_EAST,99
+SKU_017,USB-C Hub V1,Accessories,123,3,34,20,337.0,SUP_B,R2,WH_EAST,97
+SKU_018,HDMI 2.1 Cable V8,Accessories,124,32,28,19,362.17,SUP_D,R1,WH_EAST,30
+SKU_019,Thermal Interface Material V7,Components,102,6,33,20,348.7,SUP_B,R3,WH_WEST,37
+SKU_020,Gaming Headset V3,Peripherals,44,11,37,17,442.04,SUP_C,R3,WH_NORTH,81
+SKU_021,High-Performance Processor V4,Electronics,111,11,36,10,112.84,SUP_D,R1,WH_WEST,78
+SKU_022,Advanced Cooling System V6,Components,42,14,30,13,164.09,SUP_D,R4,WH_WEST,90
+SKU_023,Precision Motherboard V1,Electronics,115,19,31,12,15.91,SUP_D,R1,WH_SOUTH,42
+SKU_024,High-Speed RAM V2,Electronics,93,15,24,20,244.76,SUP_C,R2,WH_WEST,26
+SKU_025,Solid State Drive V7,Storage,76,31,45,13,70.2,SUP_C,R2,WH_EAST,15
+SKU_026,Hard Disk Drive V7,Storage,83,38,46,10,222.94,SUP_C,R2,WH_EAST,97
+SKU_027,Power Supply Unit V2,Components,8,0,36,20,388.57,SUP_C,R2,WH_SOUTH,93
+SKU_028,Graphics Processing Unit V7,Electronics,39,13,48,10,93.65,SUP_B,R4,WH_EAST,20
+SKU_029,Full Tower Case V9,Components,105,20,27,15,360.6,SUP_E,R1,WH_SOUTH,71
+SKU_030,Liquid Cooling Kit V4,Components,49,24,26,15,86.88,SUP_C,R2,WH_SOUTH,17
+SKU_031,Mechanical Keyboard V7,Peripherals,42,40,43,14,107.21,SUP_C,R4,WH_WEST,96
+SKU_032,Optical Gaming Mouse V9,Peripherals,16,37,31,16,225.97,SUP_C,R2,WH_NORTH,29
+SKU_033,4K Monitor V6,Peripherals,27,33,20,12,26.6,SUP_A,R2,WH_EAST,98
+SKU_034,Wireless Router V7,Networking,121,22,27,12,234.43,SUP_C,R2,WH_WEST,42
+SKU_035,Network Switch V7,Networking,101,11,50,17,114.52,SUP_B,R2,WH_SOUTH,58
+SKU_036,External Hard Drive V4,Storage,28,6,46,11,411.47,SUP_C,R4,WH_WEST,72
+SKU_037,USB-C Hub V2,Accessories,23,2,31,15,23.89,SUP_A,R3,WH_NORTH,88
+SKU_038,HDMI 2.1 Cable V7,Accessories,19,13,24,17,46.98,SUP_C,R2,WH_SOUTH,69
+SKU_039,Thermal Interface Material V2,Components,123,2,45,17,118.6,SUP_E,R4,WH_SOUTH,96
+SKU_040,Gaming Headset V7,Peripherals,140,23,41,10,32.04,SUP_C,R4,WH_EAST,93
+SKU_041,High-Performance Processor V5,Electronics,65,6,22,18,217.76,SUP_A,R4,WH_SOUTH,45
+SKU_042,Advanced Cooling System V6,Components,20,40,48,13,177.47,SUP_A,R3,WH_SOUTH,90
+SKU_043,Precision Motherboard V7,Electronics,113,20,50,20,159.88,SUP_B,R3,WH_SOUTH,70
+SKU_044,High-Speed RAM V8,Electronics,27,30,29,18,361.15,SUP_E,R3,WH_EAST,45
+SKU_045,Solid State Drive V8,Storage,96,39,36,10,209.29,SUP_A,R1,WH_NORTH,25
+SKU_046,Hard Disk Drive V5,Storage,88,23,40,12,65.23,SUP_B,R4,WH_SOUTH,15
+SKU_047,Power Supply Unit V5,Components,99,10,42,10,435.07,SUP_C,R2,WH_EAST,70
+SKU_048,Graphics Processing Unit V9,Electronics,23,12,23,20,58.23,SUP_B,R4,WH_WEST,94
+SKU_049,Full Tower Case V9,Components,115,2,43,11,299.1,SUP_B,R2,WH_NORTH,21
+SKU_050,Liquid Cooling Kit V8,Components,37,26,45,13,132.49,SUP_B,R3,WH_NORTH,79
