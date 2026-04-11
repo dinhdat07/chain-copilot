@@ -86,7 +86,11 @@ def daily_plan() -> dict:
         STATE = run_daily_plan(STATE, STORE, graph=GRAPH)
     except PendingApprovalError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc)) from exc
     return _response_payload()
+
+
 
 
 @app.post("/api/v1/events")

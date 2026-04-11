@@ -67,17 +67,30 @@ def _safer_action_key(action: Action) -> tuple[bool, float, float, float, float]
 def _build_safer_plan(state: SystemState, decision_log: DecisionLog) -> Plan:
     assert state.pending_plan is not None
     candidate_actions = list(state.pending_plan.actions)
-    if not candidate_actions:
-        candidate_actions = [
+    
+    from policies.constraints import evaluate_hard_constraints, evaluate_soft_constraints
+    
+    feasible_candidates = []
+    for act in candidate_actions:
+        dummy_plan = Plan(
+            plan_id="tmp", mode=state.mode, 
+            score=0.0, score_breakdown={}, actions=[act]
+        )
+        is_feas, vios = evaluate_hard_constraints(dummy_plan, state)
+        if is_feas:
+            feasible_candidates.append(act)
+
+    if not feasible_candidates:
+        feasible_candidates = [
             Action(
                 action_id="act_no_op_safer",
                 action_type=ActionType.NO_OP,
                 target_id="system",
-                reason="no safer action available",
+                reason="no safer action available or feasible",
                 priority=0.0,
             )
         ]
-    selected_actions = sorted(candidate_actions, key=_safer_action_key)[:1]
+    selected_actions = sorted(feasible_candidates, key=_safer_action_key)[:1]
     target_mode = _mode_from_state(state)
     simulated = simulate_actions(state, selected_actions)
     score, breakdown = compute_score(
@@ -98,6 +111,12 @@ def _build_safer_plan(state: SystemState, decision_log: DecisionLog) -> Plan:
         planner_reasoning=build_plan_summary(decision_log.before_kpis, simulated.kpis, breakdown),
         status=PlanStatus.PROPOSED,
     )
+    soft_violations = evaluate_soft_constraints(plan, state)
+    plan.feasible = True
+    plan.violations = soft_violations
+    if soft_violations:
+        plan.mode_rationale = "Soft constraints warnings: " + "; ".join(v.message for v in soft_violations)
+        
     needs_approval, reason = approval_required(plan, decision_log.before_kpis, simulated.kpis, _latest_event(state))
     plan.approval_required = needs_approval
     plan.approval_reason = reason
@@ -187,6 +206,9 @@ def request_safer_plan(
             else "no approval required: thresholds not triggered"
         ),
         approval_status=ApprovalStatus.PENDING if safer_plan.approval_required else ApprovalStatus.AUTO_APPLIED,
+        feasible=safer_plan.feasible,
+        violations=safer_plan.violations,
+        mode_rationale=safer_plan.mode_rationale,
     )
 
     state.latest_plan = safer_plan
