@@ -28,7 +28,6 @@ class OrderRecord(BaseModel):
 class InventoryItem(BaseModel):
     sku: str
     name: str = "Unknown SKU"
-    category: str = "General"
     on_hand: int = Field(ge=0)
     incoming_qty: int = Field(default=0, ge=0)
     reorder_point: int = Field(ge=0)

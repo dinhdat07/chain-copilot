@@ -768,13 +768,12 @@ def inventory_rows(
     rows: list[InventoryRowView] = []
     for item in state.inventory.values():
         item_status = _inventory_status(item)
-        # Search in SKU, Supplier ID, and the new Name/Category fields
+        # Search in SKU, Supplier ID, and the new Name field
         match_needle = (
             not needle
             or needle in item.sku.lower()
             or needle in item.preferred_supplier_id.lower()
             or (item.name and needle in item.name.lower())
-            or (item.category and needle in item.category.lower())
         )
         if not match_needle:
             continue
@@ -784,7 +783,6 @@ def inventory_rows(
             InventoryRowView(
                 sku=item.sku,
                 name=item.name,
-                category=item.category,
                 warehouse_id=item.warehouse_id,
                 on_hand=item.on_hand,
                 incoming_qty=item.incoming_qty,
