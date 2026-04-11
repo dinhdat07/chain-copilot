@@ -12,10 +12,13 @@ from simulation.runner import ScenarioRunner
 
 
 def _reset_api_state(tmp_path: Path) -> TestClient:
-    api.STORE = SQLiteStore(tmp_path / "chaincopilot-hardening.db")
-    api.STATE = load_initial_state()
-    api.GRAPH = build_graph()
-    api.RUNNER = ScenarioRunner(store=api.STORE)
+    store = SQLiteStore(tmp_path / "chaincopilot-hardening.db")
+    api.replace_runtime(
+        store=store,
+        state=load_initial_state(),
+        graph=build_graph(),
+        runner=ScenarioRunner(store=store),
+    )
     return TestClient(api.app)
 
 
@@ -24,7 +27,7 @@ def test_reset_endpoint_clears_persisted_state(tmp_path: Path) -> None:
     scenario_response = client.post("/api/v1/scenarios/run", json={"scenario_name": "route_blockage"})
     assert scenario_response.status_code == 200
 
-    with sqlite3.connect(api.STORE.path) as conn:
+    with sqlite3.connect(api.RUNTIME.store.path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM state_snapshots").fetchone()[0] > 0
         assert conn.execute("SELECT COUNT(*) FROM decision_logs").fetchone()[0] > 0
         assert conn.execute("SELECT COUNT(*) FROM scenario_runs").fetchone()[0] > 0
@@ -32,12 +35,12 @@ def test_reset_endpoint_clears_persisted_state(tmp_path: Path) -> None:
     response = client.post("/api/v1/reset")
 
     assert response.status_code == 200
-    assert api.STATE.decision_logs == []
-    assert api.STATE.scenario_history == []
-    assert api.STATE.pending_plan is None
-    assert api.STATE.mode == Mode.NORMAL
+    assert api.RUNTIME.state.decision_logs == []
+    assert api.RUNTIME.state.scenario_history == []
+    assert api.RUNTIME.state.pending_plan is None
+    assert api.RUNTIME.state.mode == Mode.NORMAL
 
-    with sqlite3.connect(api.STORE.path) as conn:
+    with sqlite3.connect(api.RUNTIME.store.path) as conn:
         assert conn.execute("SELECT COUNT(*) FROM state_snapshots").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM decision_logs").fetchone()[0] == 0
         assert conn.execute("SELECT COUNT(*) FROM scenario_runs").fetchone()[0] == 0

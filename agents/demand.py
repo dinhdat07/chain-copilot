@@ -52,4 +52,26 @@ class DemandAgent(BaseAgent):
                 )
             )
 
+        affected_inventory = {
+            sku: {
+                "on_hand": item.on_hand,
+                "incoming_qty": item.incoming_qty,
+                "forecast_qty": item.forecast_qty,
+                "reorder_point": item.reorder_point,
+                "safety_stock": item.safety_stock,
+            }
+            for sku, item in state.inventory.items()
+            if event_sku is None or sku == event_sku
+        }
+        if event is not None or proposal.proposals:
+            self.enrich_with_llm(
+                state=state,
+                event=event,
+                proposal=proposal,
+                state_slice={
+                    "event_sku": event_sku,
+                    "multiplier": multiplier,
+                    "affected_inventory": affected_inventory,
+                },
+            )
         return proposal

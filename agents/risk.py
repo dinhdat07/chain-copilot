@@ -21,4 +21,17 @@ class RiskAgent(BaseAgent):
             state.mode = Mode.CRISIS
         if event.severity >= 0.75:
             proposal.risks.append("high severity disruption")
+        self.enrich_with_llm(
+            state=state,
+            event=event,
+            proposal=proposal,
+            state_slice={
+                "selected_mode": state.mode.value,
+                "event_type": event.type.value,
+                "event_severity": event.severity,
+                "entity_ids": event.entity_ids,
+                "payload": event.payload,
+                "active_event_count": len(state.active_events),
+            },
+        )
         return proposal

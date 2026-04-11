@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
 from core.memory import SQLiteStore  # noqa: E402
 from core.state import load_initial_state  # noqa: E402
 from orchestrator.service import reset_runtime  # noqa: E402
-from ui import decision_log, overview, scenarios, what_if  # noqa: E402
+from ui import agent_visualization, decision_log, overview, scenarios, what_if  # noqa: E402
 
 
 def _ensure_state() -> None:
@@ -31,7 +31,7 @@ def main() -> None:
     st.sidebar.title("ChainCopilot")
     page = st.sidebar.radio(
         "Page",
-        ["Overview", "Scenarios", "Decision Log", "What-if"],
+        ["Overview", "AI Agents", "Scenarios", "Decision Log", "What-if"],
     )
     if st.sidebar.button("Reset State", width="stretch"):
         st.session_state["app_state"] = reset_runtime(store)
@@ -40,6 +40,8 @@ def main() -> None:
 
     if page == "Overview":
         st.session_state["app_state"] = overview.render_page(state, store)
+    elif page == "AI Agents":
+        agent_visualization.render_page(state)
     elif page == "Scenarios":
         st.session_state["app_state"] = scenarios.render_page(state, store)
     elif page == "Decision Log":

@@ -51,4 +51,27 @@ class SupplierAgent(BaseAgent):
                     )
                 )
                 proposal.observations.append(f"{sku} best supplier candidate: {best.supplier_id}")
+        if event is not None or proposal.proposals:
+            supplier_snapshot = {
+                sku: [
+                    {
+                        "supplier_id": supplier.supplier_id,
+                        "unit_cost": supplier.unit_cost,
+                        "lead_time_days": supplier.lead_time_days,
+                        "reliability": supplier.reliability,
+                        "status": supplier.status,
+                    }
+                    for supplier in ranked_suppliers
+                ]
+                for sku, ranked_suppliers in by_sku.items()
+            }
+            self.enrich_with_llm(
+                state=state,
+                event=event,
+                proposal=proposal,
+                state_slice={
+                    "delayed_supplier": delayed_supplier,
+                    "supplier_options": supplier_snapshot,
+                },
+            )
         return proposal
