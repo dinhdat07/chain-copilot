@@ -109,7 +109,12 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
         runtime = runtime_getter()
         runtime.approval_command(decision_id, request.action)
         resolved_decision_id = runtime.current_decision_id() or decision_id
-        return approval_command_result_view(runtime.state, decision_id=resolved_decision_id, action=request.action)
+        return approval_command_result_view(
+            runtime.state,
+            decision_id=resolved_decision_id,
+            action=request.action,
+            execution=runtime.latest_execution(),
+        )
 
     @router.get("/decision-logs", response_model=DecisionLogListResponse)
     def get_decision_logs() -> DecisionLogListResponse:

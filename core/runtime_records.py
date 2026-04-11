@@ -79,6 +79,12 @@ class ExecutionReceipt(BaseModel):
     detail: str = ""
 
 
+class ExecutionTransition(BaseModel):
+    status: ExecutionStatus
+    timestamp: datetime
+    reason: str = ""
+
+
 class ExecutionRecord(BaseModel):
     execution_id: str
     run_id: str
@@ -90,6 +96,7 @@ class ExecutionRecord(BaseModel):
     target_system: str = "digital_twin"
     action_ids: list[str] = Field(default_factory=list)
     receipts: list[ExecutionReceipt] = Field(default_factory=list)
+    status_history: list[ExecutionTransition] = Field(default_factory=list)
     failure_reason: str | None = None
     created_at: datetime
     updated_at: datetime

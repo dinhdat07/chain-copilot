@@ -174,6 +174,7 @@ class ApprovalCommandResultResponse(BaseModel):
     message: str
     latest_plan: PlanView | None = None
     pending_approval: PendingApprovalView | None = None
+    execution: "ExecutionRecordView | None" = None
     latest_trace: "TraceView | None" = None
     summary: "ControlTowerSummaryResponse | None" = None
 
@@ -342,6 +343,12 @@ class ExecutionReceiptView(BaseModel):
     detail: str = ""
 
 
+class ExecutionTransitionView(BaseModel):
+    status: str
+    timestamp: datetime
+    reason: str = ""
+
+
 class ExecutionRecordView(BaseModel):
     execution_id: str
     run_id: str
@@ -353,6 +360,7 @@ class ExecutionRecordView(BaseModel):
     target_system: str
     action_ids: list[str] = Field(default_factory=list)
     receipts: list[ExecutionReceiptView] = Field(default_factory=list)
+    status_history: list[ExecutionTransitionView] = Field(default_factory=list)
     failure_reason: str | None = None
     created_at: datetime
     updated_at: datetime

@@ -10,8 +10,10 @@ from core.runtime_records import (
     DispatchMode,
     EventEnvelope,
     ExecutionRecord,
+    ExecutionReceipt,
     ExecutionStatus,
     ExecutionSummary,
+    ExecutionTransition,
     RunRecord,
     RunStatus,
     RunType,
@@ -94,6 +96,44 @@ def execution_status_from_state(state: SystemState, decision: DecisionLog | None
     return ExecutionStatus.PLANNED
 
 
+def _transition(status: ExecutionStatus, reason: str, timestamp: datetime | None = None) -> ExecutionTransition:
+    return ExecutionTransition(
+        status=status,
+        timestamp=timestamp or utc_now(),
+        reason=reason,
+    )
+
+
+def _receipts_for_status(plan: Plan | None, status: ExecutionStatus) -> list[ExecutionReceipt]:
+    if plan is None:
+        return []
+    if status not in {ExecutionStatus.APPLIED, ExecutionStatus.APPROVED, ExecutionStatus.DISPATCHED}:
+        return []
+    detail = "simulated action applied" if status == ExecutionStatus.APPLIED else "simulated action acknowledged"
+    return [
+        ExecutionReceipt(
+            receipt_id=f"rcpt_{uuid4().hex[:8]}",
+            action_id=action.action_id,
+            status=status.value,
+            detail=detail,
+        )
+        for action in plan.actions
+    ]
+
+
+def initial_execution_history(plan: Plan | None, status: ExecutionStatus) -> list[ExecutionTransition]:
+    if plan is None:
+        return [_transition(ExecutionStatus.PLANNED, "execution placeholder created")]
+    history = [_transition(ExecutionStatus.PLANNED, "plan selected for execution lifecycle")]
+    if status == ExecutionStatus.APPROVAL_PENDING:
+        history.append(_transition(ExecutionStatus.APPROVAL_PENDING, "execution waiting for operator approval"))
+    elif status == ExecutionStatus.APPLIED:
+        history.append(_transition(ExecutionStatus.APPLIED, "execution auto-applied in simulation"))
+    elif status == ExecutionStatus.CANCELLED:
+        history.append(_transition(ExecutionStatus.CANCELLED, "execution cancelled"))
+    return history
+
+
 def build_execution_record(
     *,
     run_id: str,
@@ -107,17 +147,19 @@ def build_execution_record(
         return None
     now = created_at or utc_now()
     summary = execution_summary(state, decision=decision)
+    status = summary.status
     return ExecutionRecord(
         execution_id=execution_id or new_execution_id(),
         run_id=run_id,
         decision_id=decision.decision_id if decision else None,
         plan_id=plan.plan_id if plan else None,
-        status=summary.status,
+        status=status,
         dispatch_mode=summary.dispatch_mode,
         dry_run=False,
         target_system="digital_twin",
         action_ids=summary.action_ids,
-        receipts=[],
+        receipts=_receipts_for_status(plan, status),
+        status_history=initial_execution_history(plan, status),
         failure_reason=None,
         created_at=now,
         updated_at=now,
@@ -180,3 +222,27 @@ def clone_trace_for_run(trace: OrchestrationTrace | None, run_id: str) -> Orches
     copied = trace.model_copy(deep=True)
     copied.run_id = run_id
     return copied
+
+
+def advance_execution_record(
+    execution: ExecutionRecord,
+    *,
+    run_id: str,
+    decision_id: str | None,
+    plan: Plan | None,
+    status: ExecutionStatus,
+    reason: str,
+) -> ExecutionRecord:
+    updated = execution.model_copy(deep=True)
+    updated.run_id = run_id
+    updated.decision_id = decision_id
+    updated.plan_id = plan.plan_id if plan else updated.plan_id
+    updated.action_ids = [action.action_id for action in plan.actions] if plan else updated.action_ids
+    updated.status = status
+    updated.updated_at = utc_now()
+    updated.status_history.append(_transition(status, reason, updated.updated_at))
+    if status == ExecutionStatus.APPLIED:
+        updated.receipts = _receipts_for_status(plan, status)
+    if status == ExecutionStatus.CANCELLED:
+        updated.failure_reason = reason
+    return updated

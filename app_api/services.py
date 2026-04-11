@@ -9,8 +9,9 @@ from fastapi import HTTPException
 from core.enums import ApprovalStatus, EventType
 from core.memory import SQLiteStore
 from core.models import Action, DecisionLog, Event, OrchestrationTrace, Plan, SystemState
-from core.runtime_records import EventClass, EventEnvelope, ExecutionRecord, RunRecord, RunType
+from core.runtime_records import EventClass, EventEnvelope, ExecutionRecord, ExecutionStatus, RunRecord, RunType
 from core.runtime_tracking import (
+    advance_execution_record,
     build_execution_record,
     build_run_record,
     clone_trace_for_run,
@@ -141,6 +142,22 @@ class ControlTowerRuntime:
             current_branch="approval",
         )
 
+    def _parent_execution_id(self, parent_run_id: str | None) -> str | None:
+        if parent_run_id is None:
+            return None
+        payload = self.store.get_run_record(parent_run_id)
+        if payload is None:
+            return None
+        return payload.get("execution_id")
+
+    def _execution_for_id(self, execution_id: str | None) -> ExecutionRecord | None:
+        if execution_id is None:
+            return None
+        payload = self.store.get_execution_record(execution_id)
+        if payload is None:
+            return None
+        return ExecutionRecord.model_validate(payload)
+
     def _persist_runtime_artifacts(
         self,
         *,
@@ -149,9 +166,10 @@ class ControlTowerRuntime:
         started_at,
         parent_run_id: str | None,
         envelope: EventEnvelope | None = None,
+        execution_record: ExecutionRecord | None = None,
     ) -> tuple[RunRecord, ExecutionRecord | None]:
         decision = self._latest_decision()
-        execution = build_execution_record(
+        execution = execution_record or build_execution_record(
             run_id=run_id,
             state=self.state,
             decision=decision,
@@ -175,6 +193,12 @@ class ControlTowerRuntime:
         if decision is not None:
             self.store.save_decision_log(decision)
         return run_record, execution
+
+    def latest_execution(self) -> ExecutionRecord | None:
+        latest_run = self.store.get_run_record(self.state.run_id)
+        if latest_run is None:
+            return None
+        return self._execution_for_id(latest_run.get("execution_id"))
 
     def legacy_response_payload(self) -> dict[str, Any]:
         return {
@@ -309,13 +333,59 @@ class ControlTowerRuntime:
         parent_run_id = self.state.run_id
         run_id = new_run_id()
         self._prepare_approval_trace(run_id)
+        parent_execution = self._execution_for_id(self._parent_execution_id(parent_run_id))
+        execution_record: ExecutionRecord | None = None
         try:
             if action == "approve":
                 self.state = approve_pending_plan(self.state, self.store, decision_id, True, run_id=run_id)
+                decision = self._latest_decision()
+                if parent_execution is not None:
+                    approved = advance_execution_record(
+                        parent_execution,
+                        run_id=run_id,
+                        decision_id=decision.decision_id if decision else decision_id,
+                        plan=self.state.latest_plan,
+                        status=ExecutionStatus.APPROVED,
+                        reason="operator approved execution in simulation",
+                    )
+                    execution_record = advance_execution_record(
+                        approved,
+                        run_id=run_id,
+                        decision_id=decision.decision_id if decision else decision_id,
+                        plan=self.state.latest_plan,
+                        status=ExecutionStatus.APPLIED,
+                        reason="approved execution applied in simulation",
+                    )
             elif action == "reject":
                 self.state = approve_pending_plan(self.state, self.store, decision_id, False, run_id=run_id)
+                decision = self._latest_decision()
+                if parent_execution is not None:
+                    execution_record = advance_execution_record(
+                        parent_execution,
+                        run_id=run_id,
+                        decision_id=decision.decision_id if decision else decision_id,
+                        plan=self.state.latest_plan,
+                        status=ExecutionStatus.CANCELLED,
+                        reason="operator rejected the pending execution",
+                    )
             elif action == "safer_plan":
                 self.state = request_safer_plan(self.state, self.store, decision_id, run_id=run_id)
+                decision = self._latest_decision()
+                if parent_execution is not None:
+                    cancelled = advance_execution_record(
+                        parent_execution,
+                        run_id=run_id,
+                        decision_id=decision_id,
+                        plan=self.state.latest_plan,
+                        status=ExecutionStatus.CANCELLED,
+                        reason="pending execution superseded by safer plan request",
+                    )
+                    self.store.save_execution_record(cancelled)
+                execution_record = build_execution_record(
+                    run_id=run_id,
+                    state=self.state,
+                    decision=decision,
+                )
             else:
                 raise HTTPException(
                     status_code=422,
@@ -331,6 +401,7 @@ class ControlTowerRuntime:
             run_type=RunType.APPROVAL_RESOLUTION,
             started_at=started_at,
             parent_run_id=parent_run_id,
+            execution_record=execution_record,
         )
         return self.state
 
@@ -674,6 +745,7 @@ def approval_command_result_view(
     *,
     decision_id: str,
     action: str,
+    execution: ExecutionRecord | None = None,
 ) -> ApprovalCommandResultResponse:
     message_map = {
         "approve": "Pending plan approved and applied.",
@@ -688,6 +760,7 @@ def approval_command_result_view(
         message=message_map.get(action, "Approval action processed."),
         latest_plan=latest_plan_view(state),
         pending_approval=pending_approval_view(state),
+        execution=execution_record_view(execution) if execution is not None else None,
         latest_trace=latest_trace_view(state),
         summary=control_tower_summary(state),
     )
