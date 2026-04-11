@@ -1,7 +1,7 @@
-supplier_id,sku,unit_cost,lead_time_days,reliability,is_primary,status
-SUP_A,SKU_1,11.0,4,0.78,True,active
-SUP_B,SKU_1,11.8,2,0.93,False,active
-SUP_C,SKU_2,9.5,3,0.82,True,active
-SUP_D,SKU_2,10.2,2,0.91,False,active
-SUP_E,SKU_3,13.0,5,0.76,True,active
-SUP_F,SKU_3,13.7,3,0.90,False,active
+supplier_id,sku,unit_cost,lead_time_days,reliability,is_primary,status,capacity
+SUP_A,SKU_1,11.0,4,0.78,True,active,100
+SUP_B,SKU_1,11.8,2,0.93,False,blocked,50
+SUP_C,SKU_2,9.5,3,0.82,True,active,100
+SUP_D,SKU_2,10.2,2,0.91,False,blocked,50
+SUP_E,SKU_3,13.0,5,0.76,True,active,100
+SUP_F,SKU_3,13.7,3,0.90,False,blocked,20

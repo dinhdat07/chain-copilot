@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from core.enums import ActionType, ApprovalStatus, EventType, Mode, PlanStatus
+from core.enums import ActionType, ApprovalStatus, ConstraintViolationCode, EventType, Mode, PlanStatus
 
 
 class KPIState(BaseModel):
@@ -46,6 +46,7 @@ class SupplierRecord(BaseModel):
     reliability: float = Field(ge=0.0, le=1.0)
     is_primary: bool = False
     status: str = "active"
+    capacity: int = Field(default=9999, ge=0)
 
 
 class RouteRecord(BaseModel):
@@ -63,6 +64,11 @@ class WarehouseRecord(BaseModel):
     name: str
     capacity: int = Field(ge=0)
     region: str
+
+
+class Violation(BaseModel):
+    code: ConstraintViolationCode
+    message: str
 
 
 class Event(BaseModel):
@@ -139,6 +145,22 @@ class CandidatePlanEvaluation(BaseModel):
     llm_used: bool = False
 
 
+class HistoricalCase(BaseModel):
+    case_id: str
+    event_type: str
+    event_severity: float = 0.0
+    actions_taken: list[str] = Field(default_factory=list)
+    outcome_kpis: dict[str, float] = Field(default_factory=dict)
+    reflection_notes: str = ""
+    similarity_score: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class PlanMetadata(BaseModel):
+    referenced_cases: list[str] = Field(default_factory=list)
+    memory_influence_score: float = Field(default=0.0, ge=0.0, le=1.0)
+    strategy_rationale: str = ""
+
+
 class Plan(BaseModel):
     plan_id: str
     mode: Mode
@@ -157,6 +179,10 @@ class Plan(BaseModel):
     llm_planner_narrative: str | None = None
     critic_summary: str | None = None
     status: PlanStatus = PlanStatus.PROPOSED
+    feasible: bool = True
+    violations: list[Violation] = Field(default_factory=list)
+    mode_rationale: str = ""
+    metadata: PlanMetadata = Field(default_factory=PlanMetadata)
 
 
 class DecisionLog(BaseModel):
@@ -187,6 +213,11 @@ class DecisionLog(BaseModel):
     critic_used: bool = False
     critic_error: str | None = None
     approval_status: ApprovalStatus = ApprovalStatus.NOT_REQUIRED
+    feasible: bool = True
+    violations: list[Violation] = Field(default_factory=list)
+    mode_rationale: str = ""
+    metadata: PlanMetadata = Field(default_factory=PlanMetadata)
+
 
 
 class ReflectionNote(BaseModel):
@@ -270,6 +301,7 @@ class MemorySnapshot(BaseModel):
     last_approved_plan_ids: list[str] = Field(default_factory=list)
     reflection_notes: list[ReflectionNote] = Field(default_factory=list)
     pattern_tag_counts: dict[str, int] = Field(default_factory=dict)
+    historical_cases: list[HistoricalCase] = Field(default_factory=list)
 
 
 class ScenarioRun(BaseModel):

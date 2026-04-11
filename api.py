@@ -15,13 +15,22 @@ from simulation.runner import ScenarioRunner
 
 
 def create_runtime(store: SQLiteStore | None = None) -> ControlTowerRuntime:
+    """Creates the main engine instance."""
     return make_runtime(store=store)
 
 
+# Global runtime instance
 RUNTIME = create_runtime()
+
+# Legacy globals for backward compatibility
+STORE = RUNTIME.store
+STATE = RUNTIME.state
+GRAPH = RUNTIME.graph
+RUNNER = RUNTIME.runner
 
 
 def sync_legacy_globals() -> None:
+    """Maintains alignment between the runtime and legacy global variables."""
     global STORE, STATE, GRAPH, RUNNER
     STORE = RUNTIME.store
     STATE = RUNTIME.state
@@ -36,6 +45,7 @@ def replace_runtime(
     graph=None,
     runner=None,
 ) -> ControlTowerRuntime:
+    """Reconfigures the service with fresh components."""
     global RUNTIME
     selected_store = store or SQLiteStore()
     RUNTIME = ControlTowerRuntime(
@@ -49,6 +59,7 @@ def replace_runtime(
 
 
 def create_app(runtime: ControlTowerRuntime | None = None) -> FastAPI:
+    """Application factory for the ChainCopilot API."""
     if runtime is not None:
         replace_runtime(
             store=runtime.store,
@@ -57,7 +68,10 @@ def create_app(runtime: ControlTowerRuntime | None = None) -> FastAPI:
             runner=runtime.runner,
         )
     instance = FastAPI(title="ChainCopilot API", version="0.2.0")
+
+    # Modular routers - Includes all /api/v1 endpoints
     instance.include_router(create_router(lambda: RUNTIME))
+
     register_error_handlers(instance)
     return instance
 

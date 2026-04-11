@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.models import Action, KPIState
+from core.models import Action, KPIState, Violation
 
 
 def build_plan_summary(
@@ -67,7 +67,9 @@ def explain_rejected_actions(
     candidate_actions: list[Action],
     selected_actions: list[Action],
     action_limit: int,
+    infeasible_reasons: dict[str, list[Violation]] | None = None,
 ) -> list[dict[str, str]]:
+    infeasible_reasons = infeasible_reasons or {}
     selected_by_key = {
         (action.action_type.value, action.target_id): action for action in selected_actions
     }
@@ -83,27 +85,30 @@ def explain_rejected_actions(
     for action in candidate_actions:
         if action.action_id in selected_ids:
             continue
-        duplicate = selected_by_key.get((action.action_type.value, action.target_id))
-        if duplicate is not None:
-            reason = (
-                f"superseded by higher-priority {duplicate.action_id} on the same action target"
-            )
-        elif action.priority < threshold_priority:
-            reason = (
-                f"lower priority ({action.priority:.2f}) than the chosen set threshold "
-                f"({threshold_priority:.2f}) under action limit {action_limit}"
-            )
-        elif action.estimated_risk_delta > avg_risk:
-            reason = (
-                f"higher projected risk delta ({action.estimated_risk_delta:+.2f}) than the chosen "
-                f"set average ({avg_risk:+.2f})"
-            )
-        elif action.estimated_service_delta < avg_service:
-            reason = (
-                f"lower projected service delta ({action.estimated_service_delta:+.2f}) than the "
-                f"chosen set average ({avg_service:+.2f})"
-            )
+        if action.action_id in infeasible_reasons:
+            reason = "Hard constraint violation: " + "; ".join(v.message for v in infeasible_reasons[action.action_id])
         else:
-            reason = "weaker overall trade-off than the chosen actions on priority and projected impact"
+            duplicate = selected_by_key.get((action.action_type.value, action.target_id))
+            if duplicate is not None:
+                reason = (
+                    f"superseded by higher-priority {duplicate.action_id} on the same action target"
+                )
+            elif action.priority < threshold_priority:
+                reason = (
+                    f"lower priority ({action.priority:.2f}) than the chosen set threshold "
+                    f"({threshold_priority:.2f}) under action limit {action_limit}"
+                )
+            elif action.estimated_risk_delta > avg_risk:
+                reason = (
+                    f"higher projected risk delta ({action.estimated_risk_delta:+.2f}) than the chosen "
+                    f"set average ({avg_risk:+.2f})"
+                )
+            elif action.estimated_service_delta < avg_service:
+                reason = (
+                    f"lower projected service delta ({action.estimated_service_delta:+.2f}) than the "
+                    f"chosen set average ({avg_service:+.2f})"
+                )
+            else:
+                reason = "weaker overall trade-off than the chosen actions on priority and projected impact"
         rejected_actions.append({"action_id": action.action_id, "reason": reason})
     return rejected_actions

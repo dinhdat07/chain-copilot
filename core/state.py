@@ -30,7 +30,33 @@ def _read_csv(name: str, data_dir: Path | None = None) -> pd.DataFrame:
     return pd.read_csv(base / name)
 
 
-def default_memory() -> MemorySnapshot:
+def _load_historical_cases(data_dir: Path | None = None) -> list:
+    """Load historical cases from CSV into HistoricalCase models."""
+    from core.models import HistoricalCase
+    try:
+        df = _read_csv("historical_cases.csv", data_dir)
+        cases = []
+        for _, row in df.iterrows():
+            actions = str(row["actions_taken"]).split("|") if pd.notna(row["actions_taken"]) else []
+            cases.append(HistoricalCase(
+                case_id=row["case_id"],
+                event_type=row["event_type"],
+                event_severity=float(row["event_severity"]),
+                actions_taken=[a.strip() for a in actions],
+                outcome_kpis={
+                    "service_level": float(row["outcome_service_level"]),
+                    "total_cost": float(row["outcome_total_cost"]),
+                    "disruption_risk": float(row["outcome_disruption_risk"]),
+                    "recovery_speed": float(row["outcome_recovery_speed"]),
+                },
+                reflection_notes=str(row["reflection_notes"]),
+            ))
+        return cases
+    except FileNotFoundError:
+        return []
+
+
+def default_memory(data_dir: Path | None = None) -> MemorySnapshot:
     return MemorySnapshot(
         snapshot_id="mem_0",
         timestamp=utc_now(),
@@ -38,7 +64,10 @@ def default_memory() -> MemorySnapshot:
         route_disruption_priors={},
         scenario_outcomes={},
         last_approved_plan_ids=[],
+        historical_cases=_load_historical_cases(data_dir),
     )
+
+
 
 
 def recompute_kpis(state: SystemState, recovery_speed: float | None = None) -> KPIState:

@@ -31,6 +31,14 @@ class LegacyApprovalRequest(BaseModel):
     approve: bool = True
 
 
+class DispatchModeRequest(BaseModel):
+    mode: str = Field(default="dry_run", pattern="^(dry_run|commit)$")
+
+
+class ProgressRequest(BaseModel):
+    percentage: float = Field(ge=0.0, le=100.0)
+
+
 class ApprovalCommandRequest(BaseModel):
     action: Literal["approve", "reject", "safer_plan"]
 

@@ -14,6 +14,7 @@ from core.models import (
     Event,
     Plan,
     SystemState,
+    PlanMetadata
 )
 from llm.service import enrich_plan_and_decision, generate_candidate_plan_drafts
 from policies.explainability import (
@@ -21,9 +22,15 @@ from policies.explainability import (
     build_winning_factors,
     explain_rejected_actions,
 )
-from policies.constraints import evaluate_plan_constraints, mode_rationale
+from policies.constraints import evaluate_plan_constraints, mode_rationale, evaluate_hard_constraints, evaluate_soft_constraints
 from policies.guardrails import approval_required
 from policies.scoring import compute_score
+from policies.strategic_prompt import (
+    retrieve_relevant_cases,
+    compute_memory_influence,
+    derive_strategy_rationale,
+    build_strategic_prompt,
+)
 
 
 STRATEGY_ORDER = ("cost_first", "balanced", "resilience_first")
@@ -305,59 +312,76 @@ class PlannerAgent(BaseAgent):
 
     def run(self, state: SystemState, event: Event | None = None) -> AgentProposal:
         proposal = AgentProposal(agent=self.name)
+        
         candidate_actions = _ensure_actions(state.candidate_actions)
-        before_kpis = state.kpis.model_copy(deep=True)
         action_limit = _action_limit_for_mode(state)
-        llm_drafts, planner_error = generate_candidate_plan_drafts(
-            state=state,
-            event=event,
-            candidate_actions=candidate_actions,
+
+        feasible_candidates = []
+        infeasible_reasons = {}
+        for act in candidate_actions:
+            dummy_plan = Plan(plan_id="tmp", mode=state.mode, score=0, score_breakdown={}, actions=[act])
+            is_feas, vios = evaluate_hard_constraints(dummy_plan, state)
+            if is_feas:
+                feasible_candidates.append(act)
+            else:
+                infeasible_reasons[act.action_id] = vios
+                
+        if not feasible_candidates and candidate_actions:
+            feasible_candidates = [
+                Action(
+                    action_id="act_no_op_fallback", action_type=ActionType.NO_OP, target_id="system", 
+                    reason="all candidate actions violated hard constraints", priority=0.0
+                )
+            ]
+
+        effective_event = event or (state.active_events[-1] if state.active_events else None)
+        historical_cases = retrieve_relevant_cases(effective_event, state.memory, top_k=3)
+        memory_influence = compute_memory_influence(historical_cases)
+        strategic_prompt = build_strategic_prompt(
+            mode=state.mode.value, event=effective_event, 
+            historical_cases=historical_cases, candidate_actions=feasible_candidates
         )
-        drafts, repaired_count = _normalize_drafts(llm_drafts, candidate_actions, action_limit)
+
+        before_kpis = state.kpis.model_copy(deep=True)
+        llm_drafts, planner_error = generate_candidate_plan_drafts(
+            state=state, event=event, candidate_actions=feasible_candidates
+        )
+        
+        drafts, repaired_count = _normalize_drafts(llm_drafts, feasible_candidates, action_limit)
         fallback_used = repaired_count > 0
         if fallback_used and not planner_error:
             planner_error = "planner returned incomplete or invalid candidate plans"
 
-        by_id = {action.action_id: action for action in candidate_actions}
+        by_id = {action.action_id: action for action in feasible_candidates}
         evaluations: list[CandidatePlanEvaluation] = []
         for draft in drafts:
             actions = [by_id[action_id] for action_id in draft.action_ids if action_id in by_id]
             evaluations.append(
                 _evaluate_candidate(
-                    state=state,
-                    event=event,
-                    before_kpis=before_kpis,
-                    strategy_label=draft.strategy_label,
-                    actions=actions,
-                    rationale=draft.rationale,
-                    llm_used=draft.llm_used,
+                    state=state, event=event, before_kpis=before_kpis,
+                    strategy_label=draft.strategy_label, actions=actions,
+                    rationale=draft.rationale, llm_used=draft.llm_used,
                 )
             )
 
         if not any(item.feasible for item in evaluations):
-            safe_action = next(
-                action for action in candidate_actions if action.action_type == ActionType.NO_OP
-            )
+            safe_action = next(action for action in feasible_candidates if action.action_type == ActionType.NO_OP)
             evaluations.append(
                 _safe_hold_evaluation(
-                    state=state,
-                    event=event,
-                    before_kpis=before_kpis,
-                    safe_action=safe_action,
-                    infeasible_count=len(evaluations),
+                    state=state, event=event, before_kpis=before_kpis,
+                    safe_action=safe_action, infeasible_count=len(evaluations),
                 )
             )
 
+
         selected_evaluation = _select_best_evaluation(evaluations)
         selected_actions = [by_id[action_id] for action_id in selected_evaluation.action_ids if action_id in by_id]
-        summary = build_plan_summary(
-            before_kpis,
-            selected_evaluation.projected_kpis,
-            selected_evaluation.score_breakdown,
-        )
+        
+        summary = build_plan_summary(before_kpis, selected_evaluation.projected_kpis, selected_evaluation.score_breakdown)
         if selected_evaluation.mode_rationale:
             summary = f"{summary} Mode rationale: {selected_evaluation.mode_rationale}."
-        plan = Plan(
+
+        final_plan = Plan(
             plan_id=f"plan_{uuid4().hex[:8]}",
             mode=state.mode,
             trigger_event_ids=[event.event_id] if event else [],
@@ -368,29 +392,35 @@ class PlannerAgent(BaseAgent):
             violations=selected_evaluation.violations,
             mode_rationale=selected_evaluation.mode_rationale,
             strategy_label=selected_evaluation.strategy_label,
-            generated_by=(
-                "llm_planner"
-                if repaired_count == 0
-                else "llm_planner_repaired"
-                if repaired_count < len(STRATEGY_ORDER)
-                else "hybrid_fallback"
-            ),
+            generated_by="llm_planner" if repaired_count == 0 else ("llm_planner_repaired" if repaired_count < len(STRATEGY_ORDER) else "hybrid_fallback"),
             approval_required=selected_evaluation.approval_required,
             approval_reason=selected_evaluation.approval_reason if selected_evaluation.approval_required else "",
             planner_reasoning=summary,
             status=PlanStatus.PROPOSED,
         )
-        winning_factors = build_winning_factors(
-            selected_actions,
-            before_kpis,
-            selected_evaluation.projected_kpis,
-            selected_evaluation.score_breakdown,
+
+        is_hard_feas, hard_violations = evaluate_hard_constraints(final_plan, state)
+        soft_violations = evaluate_soft_constraints(final_plan, state)
+
+        final_plan.feasible = is_hard_feas
+        final_plan.violations = hard_violations + soft_violations
+
+
+        strategy_rationale = derive_strategy_rationale(effective_event, historical_cases, selected_actions)
+        final_plan.metadata = PlanMetadata(
+            referenced_cases=[c.case_id for c in historical_cases],
+            memory_influence_score=memory_influence,
+            strategy_rationale=strategy_rationale,
+            strategic_prompt=strategic_prompt
         )
+
+        winning_factors = build_winning_factors(selected_actions, before_kpis, selected_evaluation.projected_kpis, selected_evaluation.score_breakdown)
         rejection_reasons = explain_rejected_actions(candidate_actions, selected_actions, action_limit)
+
         decision_log = DecisionLog(
             decision_id=f"dec_{uuid4().hex[:8]}",
-            plan_id=plan.plan_id,
-            event_ids=plan.trigger_event_ids,
+            plan_id=final_plan.plan_id,
+            event_ids=final_plan.trigger_event_ids,
             before_kpis=before_kpis,
             after_kpis=selected_evaluation.projected_kpis,
             selected_actions=[action.action_id for action in selected_actions],
@@ -405,27 +435,22 @@ class PlannerAgent(BaseAgent):
             approval_reason=selected_evaluation.approval_reason,
             approval_status=ApprovalStatus.PENDING if selected_evaluation.approval_required else ApprovalStatus.AUTO_APPLIED,
             planner_error=planner_error if fallback_used else None,
+            metadata=final_plan.metadata, 
         )
-        enrich_plan_and_decision(
-            state=state,
-            event=event,
-            plan=plan,
-            decision_log=decision_log,
-        )
+        
+        enrich_plan_and_decision(state=state, event=event, plan=final_plan, decision_log=decision_log)
 
-        state.latest_plan = plan
-        state.latest_plan_id = plan.plan_id
-        state.pending_plan = plan if plan.approval_required else None
+        state.latest_plan = final_plan
+        state.latest_plan_id = final_plan.plan_id
+        state.pending_plan = final_plan if final_plan.approval_required else None
         state.decision_logs.append(decision_log)
-        proposal.observations.append(
-            f"built {plan.plan_id} using {plan.strategy_label} with score {plan.score:.4f}"
-        )
+        
+        proposal.observations.append(f"built {final_plan.plan_id} using {final_plan.strategy_label} with score {final_plan.score:.4f}")
         if fallback_used and planner_error:
-            proposal.risks.append(
-                f"planner {'repair' if repaired_count < len(STRATEGY_ORDER) else 'fallback'} used: {planner_error}"
-            )
-        proposal.domain_summary = plan.generated_by or ""
+            proposal.risks.append(f"planner {'repair' if repaired_count < len(STRATEGY_ORDER) else 'fallback'} used: {planner_error}")
+        proposal.domain_summary = final_plan.generated_by or ""
         proposal.notes_for_planner = decision_log.selection_reason
         proposal.llm_used = any(evaluation.llm_used for evaluation in evaluations)
         proposal.llm_error = planner_error if fallback_used else None
+        
         return proposal

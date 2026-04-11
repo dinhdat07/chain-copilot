@@ -32,6 +32,7 @@ class ExecutionStatus(str, Enum):
     APPROVED = "approved"
     DISPATCHED = "dispatched"
     APPLIED = "applied"
+    COMPLETED = "completed"
     FAILED = "failed"
     ROLLED_BACK = "rolled_back"
     CANCELLED = "cancelled"
@@ -39,6 +40,7 @@ class ExecutionStatus(str, Enum):
 
 class DispatchMode(str, Enum):
     SIMULATION = "simulation"
+    PRODUCTION = "production"
 
 
 class EventEnvelope(BaseModel):

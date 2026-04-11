@@ -1,4 +1,4 @@
 sku,on_hand,incoming_qty,reorder_point,safety_stock,unit_cost,preferred_supplier_id,preferred_route_id,warehouse_id,forecast_qty
-SKU_1,70,10,50,20,11.0,SUP_A,R1,WH_NORTH,45
-SKU_2,35,5,40,15,9.5,SUP_C,R2,WH_SOUTH,34
-SKU_3,28,4,25,10,13.0,SUP_E,R3,WH_NORTH,22
+SKU_1,10,5,50,20,11.0,SUP_A,R1,WH_NORTH,40
+SKU_2,35,5,40,15,9.5,SUP_C,R2,WH_SOUTH,40
+SKU_3,28,4,25,10,13.0,SUP_E,R3,WH_NORTH,40

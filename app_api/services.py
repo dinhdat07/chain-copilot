@@ -27,8 +27,10 @@ from core.runtime_tracking import (
     new_event_envelope_id,
     new_run_id,
 )
+from core.runtime_records import DispatchMode
 from core.state import clone_state, load_initial_state, recompute_kpis, state_summary, utc_now
 from llm.config import load_settings
+
 from orchestrator.graph import build_graph
 from orchestrator.service import (
     PendingApprovalError,
@@ -430,6 +432,62 @@ class ControlTowerRuntime:
             "summary": state_summary(simulated),
             "latest_plan": simulated.latest_plan.model_dump(mode="json") if simulated.latest_plan else None,
         }
+
+    def dispatch_plan(self, plan_id: str, mode: str) -> dict[str, Any]:
+        plan = None
+        if self.state.latest_plan and self.state.latest_plan.plan_id == plan_id:
+            plan = self.state.latest_plan
+        elif self.state.pending_plan and self.state.pending_plan.plan_id == plan_id:
+            plan = self.state.pending_plan
+
+        if plan is None:
+            raise_not_found("plan", plan_id)
+
+        # Implementation that matches user's and modular requirements
+        execution_id = f"exec_{uuid4().hex[:8]}"
+        now = utc_now()
+        record = ExecutionRecord(
+            execution_id=execution_id,
+            run_id=self.state.run_id,
+            plan_id=plan.plan_id,
+            status=ExecutionStatus.DISPATCHED,
+            dispatch_mode=DispatchMode.PRODUCTION if mode == "commit" else DispatchMode.SIMULATION,
+            dry_run=(mode == "dry_run"),
+            target_system="erp_adapter" if mode == "commit" else "digital_twin",
+            action_ids=[a.action_id for a in plan.actions],
+            created_at=now,
+            updated_at=now,
+        )
+        self.store.save_execution_record(record)
+        
+        return {
+            "plan_id": plan_id,
+            "mode": mode,
+            "records": [execution_record_view(record)],
+            "status": "dispatched"
+        }
+
+    def update_execution_progress(self, execution_id: str, percentage: float) -> ExecutionRecordView:
+        payload = self.store.get_execution_record(execution_id)
+        if payload is None:
+            raise_not_found("execution", execution_id)
+        
+        record = ExecutionRecord.model_validate(payload)
+        status = ExecutionStatus.COMPLETED if percentage >= 100.0 else ExecutionStatus.APPLIED
+        
+        updated = advance_execution_record(
+            record,
+            run_id=record.run_id,
+            decision_id=record.decision_id,
+            plan=None,
+            status=status,
+            reason=f"manual progress update: {percentage}%",
+        )
+        self.store.save_execution_record(updated)
+        return execution_record_view(updated)
+
+    def complete_execution(self, execution_id: str) -> ExecutionRecordView:
+        return self.update_execution_progress(execution_id, 100.0)
 
 
 def make_runtime(store: SQLiteStore | None = None) -> ControlTowerRuntime:

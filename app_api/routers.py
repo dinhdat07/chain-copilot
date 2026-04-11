@@ -12,6 +12,7 @@ from app_api.schemas import (
     ControlTowerSummaryResponse,
     DecisionLogDetailResponse,
     DecisionLogListResponse,
+    DispatchModeRequest,
     EventIngestRequest,
     EventIngestResponse,
     EventListResponse,
@@ -22,6 +23,7 @@ from app_api.schemas import (
     LegacyApprovalRequest,
     PendingApprovalResponse,
     PlanDetailResponse,
+    ProgressRequest,
     ReflectionListResponse,
     RunDetailResponse,
     RunListResponse,
@@ -260,6 +262,21 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
         if payload is None:
             raise_not_found("execution", execution_id)
         return ExecutionDetailResponse(item=execution_record_view(payload))
+
+    @router.post("/execution/{plan_id}/dispatch")
+    def dispatch_plan(plan_id: str, request: DispatchModeRequest) -> dict:
+        runtime = runtime_getter()
+        return runtime.dispatch_plan(plan_id, request.mode)
+
+    @router.post("/execution/{execution_id}/progress", response_model=ExecutionDetailResponse)
+    def update_execution_progress(execution_id: str, request: ProgressRequest) -> ExecutionDetailResponse:
+        runtime = runtime_getter()
+        return ExecutionDetailResponse(item=runtime.update_execution_progress(execution_id, request.percentage))
+
+    @router.post("/execution/{execution_id}/complete", response_model=ExecutionDetailResponse)
+    def complete_execution(execution_id: str) -> ExecutionDetailResponse:
+        runtime = runtime_getter()
+        return ExecutionDetailResponse(item=runtime.complete_execution(execution_id))
 
     @router.post("/scenarios/run")
     def run_scenario(request: ScenarioRequest) -> dict:
