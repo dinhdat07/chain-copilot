@@ -17,6 +17,8 @@ from orchestrator.service import (
 )
 from simulation.runner import ScenarioRunner
 from simulation.scenarios import get_scenario_events, list_scenarios
+from execution.dispatch_service import ActionDispatchService
+from execution.models import ExecutionRecord
 
 
 class ScenarioRequest(BaseModel):
@@ -45,6 +47,9 @@ STORE = SQLiteStore()
 STATE = load_initial_state()
 GRAPH = build_graph()
 RUNNER = ScenarioRunner(store=STORE)
+DISPATCH_SERVICE = ActionDispatchService()
+# In-memory store for ExecutionRecords (keyed by execution_id)
+_EXECUTION_STORE: dict[str, ExecutionRecord] = {}
 
 
 def _current_decision_id() -> str | None:
@@ -167,3 +172,74 @@ def what_if(request: WhatIfRequest) -> dict:
         "summary": state_summary(simulated),
         "latest_plan": simulated.latest_plan.model_dump(mode="json") if simulated.latest_plan else None,
     }
+
+
+# ---------------------------------------------------------------------------
+# Task E1 — Execution & Dispatch
+# ---------------------------------------------------------------------------
+
+class DispatchModeRequest(BaseModel):
+    mode: str = Field(default="dry_run", pattern="^(dry_run|commit)$")
+
+
+@app.post("/api/v1/execution/{plan_id}/dispatch")
+def dispatch_plan(plan_id: str, request: DispatchModeRequest) -> dict:
+    """Dispatch all actions of a plan to ERP/WMS/TMS adapters."""
+    global _EXECUTION_STORE
+
+    # Resolve the plan — accept latest plan or pending plan
+    plan = None
+    if STATE.latest_plan and STATE.latest_plan.plan_id == plan_id:
+        plan = STATE.latest_plan
+    elif STATE.pending_plan and STATE.pending_plan.plan_id == plan_id:
+        plan = STATE.pending_plan
+
+    if plan is None:
+        raise HTTPException(status_code=404, detail=f"Plan '{plan_id}' not found in current state.")
+
+    summary = DISPATCH_SERVICE.dispatch_plan(plan, mode=request.mode)
+
+    # Persist records in memory store
+    for record in summary.records:
+        _EXECUTION_STORE[record.execution_id] = record
+
+    return summary.model_dump(mode="json")
+
+
+@app.get("/api/v1/execution/{execution_id}")
+def get_execution(execution_id: str) -> dict:
+    """Retrieve a single ExecutionRecord by ID."""
+    record = _EXECUTION_STORE.get(execution_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail=f"ExecutionRecord '{execution_id}' not found.")
+    return record.model_dump(mode="json")
+
+
+class ProgressRequest(BaseModel):
+    percentage: float = Field(ge=0.0, le=100.0)
+
+
+@app.post("/api/v1/execution/{execution_id}/progress")
+def update_execution_progress(execution_id: str, request: ProgressRequest) -> dict:
+    """Manual update of physical progress (e.g., from warehouse staff)."""
+    record = _EXECUTION_STORE.get(execution_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="ExecutionRecord not found.")
+    
+    if request.percentage >= 100.0:
+        record.mark_completed()
+    else:
+        record.set_progress(request.percentage)
+    
+    return record.model_dump(mode="json")
+
+
+@app.post("/api/v1/execution/{execution_id}/complete")
+def complete_execution(execution_id: str) -> dict:
+    """Manual confirmation: 'Action Finished' (Physical arrival confirmed)."""
+    record = _EXECUTION_STORE.get(execution_id)
+    if record is None:
+        raise HTTPException(status_code=404, detail="ExecutionRecord not found.")
+    
+    record.mark_completed()
+    return record.model_dump(mode="json")

@@ -52,3 +52,21 @@ class ConstraintViolationCode(str, Enum):
     RELIABILITY_LOW = "RELIABILITY_LOW"
 
 
+class ExecutionStatus(str, Enum):
+    PLANNED                      = "planned"
+    APPROVAL_PENDING             = "approval_pending"
+    APPROVED                     = "approved"
+    DISPATCHED                   = "dispatched"
+    APPLIED                      = "applied"        
+    IN_PROGRESS                  = "in_progress"   
+    COMPLETED                    = "completed"    
+    FAILED                       = "failed"
+    ROLLED_BACK                  = "rolled_back"
+
+
+class PlanExecutionStatus(str, Enum):
+    PENDING                      = "pending"
+    COMPLETED                    = "completed"
+    PARTIALLY_APPLIED            = "partially_applied"
+    COMPLETED_WITH_ERRORS        = "completed_with_errors"
+    REQUIRES_MANUAL_INTERVENTION = "requires_manual_intervention"
