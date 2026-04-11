@@ -495,6 +495,40 @@ class ReflectionListResponse(BaseModel):
     pattern_tag_counts: dict[str, int] = Field(default_factory=dict)
 
 
+class ServiceFlagsView(BaseModel):
+    llm_enabled: bool
+    llm_provider: str
+    llm_model: str
+    llm_timeout_s: float
+    llm_retry_attempts: int
+    planner_mode: str
+    dispatch_mode: str
+    degraded_mode: str = "deterministic_fallback"
+
+
+class ServiceMetricsView(BaseModel):
+    total_runs: int
+    completed_runs: int
+    failed_runs: int
+    total_events: int
+    total_executions: int
+    avg_run_duration_ms: float
+    avg_agent_step_duration_ms: float
+    llm_fallback_rate: float
+    approval_rate: float
+    execution_failure_rate: float
+    latest_run_id: str | None = None
+
+
+class ServiceRuntimeView(BaseModel):
+    flags: ServiceFlagsView
+    metrics: ServiceMetricsView
+
+
+class ServiceRuntimeResponse(BaseModel):
+    item: ServiceRuntimeView
+
+
 class ErrorResponse(BaseModel):
     code: str
     message: str

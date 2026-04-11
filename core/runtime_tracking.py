@@ -171,9 +171,10 @@ def execution_summary(state: SystemState, decision: DecisionLog | None = None) -
     if plan is None and decision is None:
         return None
     actions = [action.action_id for action in plan.actions] if plan else []
+    settings = load_settings()
     return ExecutionSummary(
         status=execution_status_from_state(state, decision=decision),
-        dispatch_mode=DispatchMode.SIMULATION,
+        dispatch_mode=DispatchMode(settings.dispatch_mode),
         action_ids=actions,
     )
 

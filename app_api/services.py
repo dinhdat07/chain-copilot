@@ -9,7 +9,15 @@ from fastapi import HTTPException
 from core.enums import ApprovalStatus, EventType
 from core.memory import SQLiteStore
 from core.models import Action, ConstraintViolation, DecisionLog, Event, OrchestrationTrace, Plan, SystemState
-from core.runtime_records import EventClass, EventEnvelope, ExecutionRecord, ExecutionStatus, RunRecord, RunType
+from core.runtime_records import (
+    EventClass,
+    EventEnvelope,
+    ExecutionRecord,
+    ExecutionStatus,
+    RunRecord,
+    RunStatus,
+    RunType,
+)
 from core.runtime_tracking import (
     advance_execution_record,
     build_execution_record,
@@ -20,6 +28,7 @@ from core.runtime_tracking import (
     new_run_id,
 )
 from core.state import clone_state, load_initial_state, recompute_kpis, state_summary, utc_now
+from llm.config import load_settings
 from orchestrator.graph import build_graph
 from orchestrator.service import (
     PendingApprovalError,
@@ -55,6 +64,9 @@ from app_api.schemas import (
     RunView,
     RouteDecisionView,
     ScenarioOutcomeView,
+    ServiceFlagsView,
+    ServiceMetricsView,
+    ServiceRuntimeView,
     SupplierRowView,
     TraceView,
 )
@@ -422,6 +434,78 @@ class ControlTowerRuntime:
 
 def make_runtime(store: SQLiteStore | None = None) -> ControlTowerRuntime:
     return ControlTowerRuntime.create(store=store)
+
+
+def _average(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    return round(sum(values) / len(values), 2)
+
+
+def service_flags_view() -> ServiceFlagsView:
+    settings = load_settings()
+    return ServiceFlagsView(
+        llm_enabled=settings.enabled,
+        llm_provider=settings.provider,
+        llm_model=settings.model,
+        llm_timeout_s=settings.timeout_s,
+        llm_retry_attempts=settings.retry_attempts,
+        planner_mode=settings.planner_mode,
+        dispatch_mode=settings.dispatch_mode,
+    )
+
+
+def service_metrics_view(runtime: ControlTowerRuntime) -> ServiceMetricsView:
+    runs = [RunRecord.model_validate(item) for item in runtime.store.list_run_records(limit=None)]
+    traces = [OrchestrationTrace.model_validate(item) for item in runtime.store.list_traces(limit=None)]
+    executions = [ExecutionRecord.model_validate(item) for item in runtime.store.list_execution_records(limit=None)]
+    total_runs = len(runs)
+    completed_runs = sum(1 for item in runs if item.status == RunStatus.COMPLETED)
+    failed_runs = sum(1 for item in runs if item.status == RunStatus.FAILED)
+    run_durations = [item.duration_ms for item in runs if item.duration_ms > 0.0]
+    step_durations = [
+        step.duration_ms
+        for trace in traces
+        for step in trace.steps
+        if step.duration_ms is not None and step.duration_ms >= 0.0
+    ]
+    approval_count = sum(
+        1
+        for item in runs
+        if item.approval_status in {
+            ApprovalStatus.PENDING.value,
+            ApprovalStatus.APPROVED.value,
+            ApprovalStatus.REJECTED.value,
+        }
+    )
+    execution_failures = sum(
+        1 for item in executions if item.status in {ExecutionStatus.FAILED, ExecutionStatus.ROLLED_BACK}
+    )
+    return ServiceMetricsView(
+        total_runs=total_runs,
+        completed_runs=completed_runs,
+        failed_runs=failed_runs,
+        total_events=len(runtime.store.list_event_envelopes(limit=None)),
+        total_executions=len(executions),
+        avg_run_duration_ms=_average(run_durations),
+        avg_agent_step_duration_ms=_average(step_durations),
+        llm_fallback_rate=round(
+            sum(1 for item in runs if item.llm_fallback_used) / total_runs,
+            4,
+        )
+        if total_runs
+        else 0.0,
+        approval_rate=round(approval_count / total_runs, 4) if total_runs else 0.0,
+        execution_failure_rate=round(execution_failures / len(executions), 4) if executions else 0.0,
+        latest_run_id=runs[0].run_id if runs else None,
+    )
+
+
+def service_runtime_view(runtime: ControlTowerRuntime) -> ServiceRuntimeView:
+    return ServiceRuntimeView(
+        flags=service_flags_view(),
+        metrics=service_metrics_view(runtime),
+    )
 
 
 def kpi_view(kpis) -> KPIView:

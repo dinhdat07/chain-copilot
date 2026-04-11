@@ -1,8 +1,12 @@
 from __future__ import annotations
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 
 from app_api.routers import create_router
+from app_api.schemas import ErrorResponse
 from app_api.services import ControlTowerRuntime, make_runtime
 from core.memory import SQLiteStore
 from core.state import load_initial_state
@@ -54,7 +58,66 @@ def create_app(runtime: ControlTowerRuntime | None = None) -> FastAPI:
         )
     instance = FastAPI(title="ChainCopilot API", version="0.2.0")
     instance.include_router(create_router(lambda: RUNTIME))
+    register_error_handlers(instance)
     return instance
+
+
+def _error_code_for_status(status_code: int) -> str:
+    return {
+        404: "not_found",
+        409: "conflict",
+        422: "validation_error",
+        500: "system_error",
+    }.get(status_code, "request_error")
+
+
+def _error_response(status_code: int, detail) -> JSONResponse:
+    if isinstance(detail, ErrorResponse):
+        payload = detail
+    elif isinstance(detail, dict):
+        payload = ErrorResponse(
+            code=str(detail.get("code") or _error_code_for_status(status_code)),
+            message=str(detail.get("message") or "request failed"),
+            details=detail.get("details", {}),
+            retryable=bool(detail.get("retryable", False)),
+            correlation_id=detail.get("correlation_id"),
+        )
+    else:
+        payload = ErrorResponse(
+            code=_error_code_for_status(status_code),
+            message=str(detail or "request failed"),
+        )
+    return JSONResponse(status_code=status_code, content=jsonable_encoder(payload))
+
+
+def register_error_handlers(instance: FastAPI) -> None:
+    @instance.exception_handler(HTTPException)
+    async def _http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
+        return _error_response(exc.status_code, exc.detail)
+
+    @instance.exception_handler(RequestValidationError)
+    async def _validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+        return _error_response(
+            422,
+            {
+                "code": "validation_error",
+                "message": "request validation failed",
+                "details": {"errors": exc.errors()},
+                "retryable": False,
+            },
+        )
+
+    @instance.exception_handler(Exception)
+    async def _unhandled_exception_handler(_: Request, exc: Exception) -> JSONResponse:
+        return _error_response(
+            500,
+            {
+                "code": "system_error",
+                "message": "internal server error",
+                "details": {"exception_type": exc.__class__.__name__},
+                "retryable": False,
+            },
+        )
 
 
 sync_legacy_globals()
