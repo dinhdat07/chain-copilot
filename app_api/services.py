@@ -42,17 +42,14 @@ from app_api.schemas import (
     DecisionLogDetailView,
     DecisionLogSummaryView,
     EventEnvelopeView,
-    EventIngestResponse,
     EventIngestRequest,
     EventView,
-    ExecutionDetailResponse,
     ExecutionRecordView,
     InventoryRowView,
     KPIView,
     PendingApprovalView,
     PlanView,
     ReflectionView,
-    RunDetailResponse,
     RunView,
     RouteDecisionView,
     ScenarioOutcomeView,
@@ -327,7 +324,7 @@ class ControlTowerRuntime:
                         message="approval action must be approve, reject, or safer_plan",
                     ),
                 )
-        except ValueError as exc:
+        except ValueError:
             raise_not_found("decision", decision_id)
         self._persist_runtime_artifacts(
             run_id=run_id,
