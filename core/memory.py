@@ -123,6 +123,15 @@ class SQLiteStore:
             ).fetchone()
         return None if row is None else json.loads(row[0])
 
+    def list_event_envelopes(self, limit: int | None = None) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT payload FROM event_log").fetchall()
+        items = [json.loads(row[0]) for row in rows]
+        items.sort(key=lambda item: item.get("ingested_at", ""), reverse=True)
+        if limit is None or limit < 0:
+            return items
+        return items[:limit]
+
     def save_run_record(self, run: RunRecord) -> None:
         payload = json.dumps(run.model_dump(mode="json"), ensure_ascii=True)
         with self._connect() as conn:
@@ -135,6 +144,23 @@ class SQLiteStore:
         with self._connect() as conn:
             row = conn.execute(
                 "SELECT payload FROM run_records WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+        return None if row is None else json.loads(row[0])
+
+    def list_run_records(self, limit: int | None = None) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT payload FROM run_records").fetchall()
+        items = [json.loads(row[0]) for row in rows]
+        items.sort(key=lambda item: item.get("started_at", ""), reverse=True)
+        if limit is None or limit < 0:
+            return items
+        return items[:limit]
+
+    def get_state_snapshot(self, run_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload FROM state_snapshots WHERE run_id = ?",
                 (run_id,),
             ).fetchone()
         return None if row is None else json.loads(row[0])
@@ -155,6 +181,15 @@ class SQLiteStore:
             ).fetchone()
         return None if row is None else json.loads(row[0])
 
+    def list_traces(self, limit: int | None = None) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT payload FROM traces").fetchall()
+        items = [json.loads(row[0]) for row in rows]
+        items.sort(key=lambda item: item.get("started_at", ""), reverse=True)
+        if limit is None or limit < 0:
+            return items
+        return items[:limit]
+
     def save_execution_record(self, execution: ExecutionRecord) -> None:
         payload = json.dumps(execution.model_dump(mode="json"), ensure_ascii=True)
         with self._connect() as conn:
@@ -170,6 +205,15 @@ class SQLiteStore:
                 (execution_id,),
             ).fetchone()
         return None if row is None else json.loads(row[0])
+
+    def list_execution_records(self, limit: int | None = None) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT payload FROM execution_records").fetchall()
+        items = [json.loads(row[0]) for row in rows]
+        items.sort(key=lambda item: item.get("updated_at", ""), reverse=True)
+        if limit is None or limit < 0:
+            return items
+        return items[:limit]
 
     def clear_all(self) -> None:
         with self._connect() as conn:

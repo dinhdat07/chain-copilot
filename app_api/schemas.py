@@ -105,12 +105,22 @@ class ActionView(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 
+class ConstraintViolationView(BaseModel):
+    code: str
+    message: str
+    action_id: str | None = None
+    severity: str = "hard"
+
+
 class CandidateEvaluationView(BaseModel):
     strategy_label: str
     action_ids: list[str] = Field(default_factory=list)
     score: float
     score_breakdown: dict[str, float] = Field(default_factory=dict)
     projected_kpis: KPIView
+    feasible: bool = True
+    violations: list[ConstraintViolationView] = Field(default_factory=list)
+    mode_rationale: str = ""
     approval_required: bool
     approval_reason: str
     rationale: str
@@ -124,6 +134,9 @@ class PlanView(BaseModel):
     status: str
     score: float
     score_breakdown: dict[str, float] = Field(default_factory=dict)
+    feasible: bool = True
+    violations: list[ConstraintViolationView] = Field(default_factory=list)
+    mode_rationale: str = ""
     strategy_label: str | None = None
     generated_by: str | None = None
     approval_required: bool = False
@@ -174,6 +187,7 @@ class ApprovalCommandResultResponse(BaseModel):
     message: str
     latest_plan: PlanView | None = None
     pending_approval: PendingApprovalView | None = None
+    execution: "ExecutionRecordView | None" = None
     latest_trace: "TraceView | None" = None
     summary: "ControlTowerSummaryResponse | None" = None
 
@@ -198,6 +212,7 @@ class DecisionLogDetailView(BaseModel):
     approval_reason: str
     rationale: str
     selection_reason: str
+    mode_rationale: str = ""
     winning_factors: list[str] = Field(default_factory=list)
     score_breakdown: dict[str, float] = Field(default_factory=dict)
     selected_actions: list[str] = Field(default_factory=list)
@@ -342,6 +357,12 @@ class ExecutionReceiptView(BaseModel):
     detail: str = ""
 
 
+class ExecutionTransitionView(BaseModel):
+    status: str
+    timestamp: datetime
+    reason: str = ""
+
+
 class ExecutionRecordView(BaseModel):
     execution_id: str
     run_id: str
@@ -353,6 +374,7 @@ class ExecutionRecordView(BaseModel):
     target_system: str
     action_ids: list[str] = Field(default_factory=list)
     receipts: list[ExecutionReceiptView] = Field(default_factory=list)
+    status_history: list[ExecutionTransitionView] = Field(default_factory=list)
     failure_reason: str | None = None
     created_at: datetime
     updated_at: datetime
@@ -453,6 +475,16 @@ class RunDetailResponse(BaseModel):
     item: RunView
 
 
+class RunListResponse(BaseModel):
+    items: list[RunView]
+    total: int
+
+
+class RunStateResponse(BaseModel):
+    run: RunView
+    state: ControlTowerStateResponse
+
+
 class ExecutionDetailResponse(BaseModel):
     item: ExecutionRecordView
 
@@ -461,6 +493,40 @@ class ReflectionListResponse(BaseModel):
     items: list[ReflectionView]
     scenarios: list[ScenarioOutcomeView]
     pattern_tag_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class ServiceFlagsView(BaseModel):
+    llm_enabled: bool
+    llm_provider: str
+    llm_model: str
+    llm_timeout_s: float
+    llm_retry_attempts: int
+    planner_mode: str
+    dispatch_mode: str
+    degraded_mode: str = "deterministic_fallback"
+
+
+class ServiceMetricsView(BaseModel):
+    total_runs: int
+    completed_runs: int
+    failed_runs: int
+    total_events: int
+    total_executions: int
+    avg_run_duration_ms: float
+    avg_agent_step_duration_ms: float
+    llm_fallback_rate: float
+    approval_rate: float
+    execution_failure_rate: float
+    latest_run_id: str | None = None
+
+
+class ServiceRuntimeView(BaseModel):
+    flags: ServiceFlagsView
+    metrics: ServiceMetricsView
+
+
+class ServiceRuntimeResponse(BaseModel):
+    item: ServiceRuntimeView
 
 
 class ErrorResponse(BaseModel):

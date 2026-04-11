@@ -17,13 +17,17 @@ from app_api.schemas import (
     EventListResponse,
     EventRequest,
     ExecutionDetailResponse,
+    ErrorResponse,
     InventoryListResponse,
     LegacyApprovalRequest,
     PendingApprovalResponse,
     PlanDetailResponse,
     ReflectionListResponse,
     RunDetailResponse,
+    RunListResponse,
+    RunStateResponse,
     ScenarioRequest,
+    ServiceRuntimeResponse,
     SupplierListResponse,
     TraceResponse,
     WhatIfRequest,
@@ -44,18 +48,30 @@ from app_api.services import (
     latest_trace_view,
     pending_approval_view,
     plan_view,
+    raise_not_found,
     reflection_views,
     run_record_view,
+    run_record_list_view,
     scenario_outcomes,
+    service_runtime_view,
     supplier_rows,
     trace_view_from_record,
+    historical_control_tower_state,
 )
 from core.models import OrchestrationTrace
 from core.runtime_records import RunRecord
 
 
 def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRouter:
-    router = APIRouter(prefix="/api/v1")
+    router = APIRouter(
+        prefix="/api/v1",
+        responses={
+            404: {"model": ErrorResponse},
+            409: {"model": ErrorResponse},
+            422: {"model": ErrorResponse},
+            500: {"model": ErrorResponse},
+        },
+    )
 
     @router.get("/control-tower/summary", response_model=ControlTowerSummaryResponse)
     def get_control_tower_summary() -> ControlTowerSummaryResponse:
@@ -66,6 +82,11 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
     def get_control_tower_state() -> ControlTowerStateResponse:
         runtime = runtime_getter()
         return control_tower_state(runtime.state)
+
+    @router.get("/service/runtime", response_model=ServiceRuntimeResponse)
+    def get_service_runtime() -> ServiceRuntimeResponse:
+        runtime = runtime_getter()
+        return ServiceRuntimeResponse(item=service_runtime_view(runtime))
 
     @router.get("/inventory", response_model=InventoryListResponse)
     def get_inventory(search: str | None = None, status: str | None = None) -> InventoryListResponse:
@@ -105,7 +126,12 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
         runtime = runtime_getter()
         runtime.approval_command(decision_id, request.action)
         resolved_decision_id = runtime.current_decision_id() or decision_id
-        return approval_command_result_view(runtime.state, decision_id=resolved_decision_id, action=request.action)
+        return approval_command_result_view(
+            runtime.state,
+            decision_id=resolved_decision_id,
+            action=request.action,
+            execution=runtime.latest_execution(),
+        )
 
     @router.get("/decision-logs", response_model=DecisionLogListResponse)
     def get_decision_logs() -> DecisionLogListResponse:
@@ -185,29 +211,49 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
         runtime = runtime_getter()
         payload = runtime.store.get_run_record(run_id)
         if payload is None:
-            raise HTTPException(status_code=404, detail={"code": "run_not_found", "message": "run not found"})
+            raise_not_found("run", run_id)
         return RunDetailResponse(item=run_record_view(payload))
+
+    @router.get("/runs", response_model=RunListResponse)
+    def list_runs(limit: int = 20) -> RunListResponse:
+        runtime = runtime_getter()
+        items = runtime.store.list_run_records(limit=max(limit, 0))
+        return RunListResponse(
+            items=run_record_list_view(items),
+            total=len(runtime.store.list_run_records(limit=None)),
+        )
 
     @router.get("/runs/{run_id}/trace", response_model=TraceResponse)
     def get_run_trace(run_id: str) -> TraceResponse:
         runtime = runtime_getter()
         trace_payload = runtime.store.get_trace(run_id)
         if trace_payload is None:
-            raise HTTPException(status_code=404, detail={"code": "trace_not_found", "message": "trace not found"})
+            raise_not_found("trace", run_id)
         run_payload = runtime.store.get_run_record(run_id)
         trace = OrchestrationTrace.model_validate(trace_payload)
         run = RunRecord.model_validate(run_payload) if run_payload is not None else None
         return TraceResponse(item=trace_view_from_record(trace, run=run))
+
+    @router.get("/runs/{run_id}/state", response_model=RunStateResponse)
+    def get_run_state(run_id: str) -> RunStateResponse:
+        runtime = runtime_getter()
+        run_payload = runtime.store.get_run_record(run_id)
+        if run_payload is None:
+            raise_not_found("run", run_id)
+        state_payload = runtime.store.get_state_snapshot(run_id)
+        if state_payload is None:
+            raise_not_found("state_snapshot", run_id)
+        return RunStateResponse(
+            run=run_record_view(run_payload),
+            state=historical_control_tower_state(state_payload),
+        )
 
     @router.get("/execution/{execution_id}", response_model=ExecutionDetailResponse)
     def get_execution(execution_id: str) -> ExecutionDetailResponse:
         runtime = runtime_getter()
         payload = runtime.store.get_execution_record(execution_id)
         if payload is None:
-            raise HTTPException(
-                status_code=404,
-                detail={"code": "execution_not_found", "message": "execution not found"},
-            )
+            raise_not_found("execution", execution_id)
         return ExecutionDetailResponse(item=execution_record_view(payload))
 
     @router.post("/scenarios/run")

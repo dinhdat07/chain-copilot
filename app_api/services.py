@@ -8,9 +8,18 @@ from fastapi import HTTPException
 
 from core.enums import ApprovalStatus, EventType
 from core.memory import SQLiteStore
-from core.models import Action, DecisionLog, Event, OrchestrationTrace, Plan, SystemState
-from core.runtime_records import EventClass, EventEnvelope, ExecutionRecord, RunRecord, RunType
+from core.models import Action, ConstraintViolation, DecisionLog, Event, OrchestrationTrace, Plan, SystemState
+from core.runtime_records import (
+    EventClass,
+    EventEnvelope,
+    ExecutionRecord,
+    ExecutionStatus,
+    RunRecord,
+    RunStatus,
+    RunType,
+)
 from core.runtime_tracking import (
+    advance_execution_record,
     build_execution_record,
     build_run_record,
     clone_trace_for_run,
@@ -19,6 +28,7 @@ from core.runtime_tracking import (
     new_run_id,
 )
 from core.state import clone_state, load_initial_state, recompute_kpis, state_summary, utc_now
+from llm.config import load_settings
 from orchestrator.graph import build_graph
 from orchestrator.service import (
     PendingApprovalError,
@@ -37,6 +47,7 @@ from app_api.schemas import (
     AlertView,
     AgentStepView,
     CandidateEvaluationView,
+    ConstraintViolationView,
     ControlTowerStateResponse,
     ControlTowerSummaryResponse,
     DecisionLogDetailView,
@@ -53,6 +64,9 @@ from app_api.schemas import (
     RunView,
     RouteDecisionView,
     ScenarioOutcomeView,
+    ServiceFlagsView,
+    ServiceMetricsView,
+    ServiceRuntimeView,
     SupplierRowView,
     TraceView,
 )
@@ -141,6 +155,22 @@ class ControlTowerRuntime:
             current_branch="approval",
         )
 
+    def _parent_execution_id(self, parent_run_id: str | None) -> str | None:
+        if parent_run_id is None:
+            return None
+        payload = self.store.get_run_record(parent_run_id)
+        if payload is None:
+            return None
+        return payload.get("execution_id")
+
+    def _execution_for_id(self, execution_id: str | None) -> ExecutionRecord | None:
+        if execution_id is None:
+            return None
+        payload = self.store.get_execution_record(execution_id)
+        if payload is None:
+            return None
+        return ExecutionRecord.model_validate(payload)
+
     def _persist_runtime_artifacts(
         self,
         *,
@@ -149,9 +179,10 @@ class ControlTowerRuntime:
         started_at,
         parent_run_id: str | None,
         envelope: EventEnvelope | None = None,
+        execution_record: ExecutionRecord | None = None,
     ) -> tuple[RunRecord, ExecutionRecord | None]:
         decision = self._latest_decision()
-        execution = build_execution_record(
+        execution = execution_record or build_execution_record(
             run_id=run_id,
             state=self.state,
             decision=decision,
@@ -175,6 +206,12 @@ class ControlTowerRuntime:
         if decision is not None:
             self.store.save_decision_log(decision)
         return run_record, execution
+
+    def latest_execution(self) -> ExecutionRecord | None:
+        latest_run = self.store.get_run_record(self.state.run_id)
+        if latest_run is None:
+            return None
+        return self._execution_for_id(latest_run.get("execution_id"))
 
     def legacy_response_payload(self) -> dict[str, Any]:
         return {
@@ -309,13 +346,59 @@ class ControlTowerRuntime:
         parent_run_id = self.state.run_id
         run_id = new_run_id()
         self._prepare_approval_trace(run_id)
+        parent_execution = self._execution_for_id(self._parent_execution_id(parent_run_id))
+        execution_record: ExecutionRecord | None = None
         try:
             if action == "approve":
                 self.state = approve_pending_plan(self.state, self.store, decision_id, True, run_id=run_id)
+                decision = self._latest_decision()
+                if parent_execution is not None:
+                    approved = advance_execution_record(
+                        parent_execution,
+                        run_id=run_id,
+                        decision_id=decision.decision_id if decision else decision_id,
+                        plan=self.state.latest_plan,
+                        status=ExecutionStatus.APPROVED,
+                        reason="operator approved execution in simulation",
+                    )
+                    execution_record = advance_execution_record(
+                        approved,
+                        run_id=run_id,
+                        decision_id=decision.decision_id if decision else decision_id,
+                        plan=self.state.latest_plan,
+                        status=ExecutionStatus.APPLIED,
+                        reason="approved execution applied in simulation",
+                    )
             elif action == "reject":
                 self.state = approve_pending_plan(self.state, self.store, decision_id, False, run_id=run_id)
+                decision = self._latest_decision()
+                if parent_execution is not None:
+                    execution_record = advance_execution_record(
+                        parent_execution,
+                        run_id=run_id,
+                        decision_id=decision.decision_id if decision else decision_id,
+                        plan=self.state.latest_plan,
+                        status=ExecutionStatus.CANCELLED,
+                        reason="operator rejected the pending execution",
+                    )
             elif action == "safer_plan":
                 self.state = request_safer_plan(self.state, self.store, decision_id, run_id=run_id)
+                decision = self._latest_decision()
+                if parent_execution is not None:
+                    cancelled = advance_execution_record(
+                        parent_execution,
+                        run_id=run_id,
+                        decision_id=decision_id,
+                        plan=self.state.latest_plan,
+                        status=ExecutionStatus.CANCELLED,
+                        reason="pending execution superseded by safer plan request",
+                    )
+                    self.store.save_execution_record(cancelled)
+                execution_record = build_execution_record(
+                    run_id=run_id,
+                    state=self.state,
+                    decision=decision,
+                )
             else:
                 raise HTTPException(
                     status_code=422,
@@ -331,6 +414,7 @@ class ControlTowerRuntime:
             run_type=RunType.APPROVAL_RESOLUTION,
             started_at=started_at,
             parent_run_id=parent_run_id,
+            execution_record=execution_record,
         )
         return self.state
 
@@ -352,6 +436,78 @@ def make_runtime(store: SQLiteStore | None = None) -> ControlTowerRuntime:
     return ControlTowerRuntime.create(store=store)
 
 
+def _average(values: list[float]) -> float:
+    if not values:
+        return 0.0
+    return round(sum(values) / len(values), 2)
+
+
+def service_flags_view() -> ServiceFlagsView:
+    settings = load_settings()
+    return ServiceFlagsView(
+        llm_enabled=settings.enabled,
+        llm_provider=settings.provider,
+        llm_model=settings.model,
+        llm_timeout_s=settings.timeout_s,
+        llm_retry_attempts=settings.retry_attempts,
+        planner_mode=settings.planner_mode,
+        dispatch_mode=settings.dispatch_mode,
+    )
+
+
+def service_metrics_view(runtime: ControlTowerRuntime) -> ServiceMetricsView:
+    runs = [RunRecord.model_validate(item) for item in runtime.store.list_run_records(limit=None)]
+    traces = [OrchestrationTrace.model_validate(item) for item in runtime.store.list_traces(limit=None)]
+    executions = [ExecutionRecord.model_validate(item) for item in runtime.store.list_execution_records(limit=None)]
+    total_runs = len(runs)
+    completed_runs = sum(1 for item in runs if item.status == RunStatus.COMPLETED)
+    failed_runs = sum(1 for item in runs if item.status == RunStatus.FAILED)
+    run_durations = [item.duration_ms for item in runs if item.duration_ms > 0.0]
+    step_durations = [
+        step.duration_ms
+        for trace in traces
+        for step in trace.steps
+        if step.duration_ms is not None and step.duration_ms >= 0.0
+    ]
+    approval_count = sum(
+        1
+        for item in runs
+        if item.approval_status in {
+            ApprovalStatus.PENDING.value,
+            ApprovalStatus.APPROVED.value,
+            ApprovalStatus.REJECTED.value,
+        }
+    )
+    execution_failures = sum(
+        1 for item in executions if item.status in {ExecutionStatus.FAILED, ExecutionStatus.ROLLED_BACK}
+    )
+    return ServiceMetricsView(
+        total_runs=total_runs,
+        completed_runs=completed_runs,
+        failed_runs=failed_runs,
+        total_events=len(runtime.store.list_event_envelopes(limit=None)),
+        total_executions=len(executions),
+        avg_run_duration_ms=_average(run_durations),
+        avg_agent_step_duration_ms=_average(step_durations),
+        llm_fallback_rate=round(
+            sum(1 for item in runs if item.llm_fallback_used) / total_runs,
+            4,
+        )
+        if total_runs
+        else 0.0,
+        approval_rate=round(approval_count / total_runs, 4) if total_runs else 0.0,
+        execution_failure_rate=round(execution_failures / len(executions), 4) if executions else 0.0,
+        latest_run_id=runs[0].run_id if runs else None,
+    )
+
+
+def service_runtime_view(runtime: ControlTowerRuntime) -> ServiceRuntimeView:
+    return ServiceRuntimeView(
+        flags=service_flags_view(),
+        metrics=service_metrics_view(runtime),
+    )
+
+
 def kpi_view(kpis) -> KPIView:
     return KPIView(**kpis.model_dump())
 
@@ -370,11 +526,20 @@ def run_record_view(item: RunRecord | dict) -> RunView:
     return RunView(**payload.model_dump(mode="json"))
 
 
+def run_record_list_view(items: list[RunRecord | dict]) -> list[RunView]:
+    return [run_record_view(item) for item in items]
+
+
 def execution_record_view(item: ExecutionRecord | dict) -> ExecutionRecordView:
     payload = item if isinstance(item, ExecutionRecord) else ExecutionRecord.model_validate(item)
     if isinstance(payload, ExecutionRecord):
         payload = payload
     return ExecutionRecordView(**payload.model_dump(mode="json"))
+
+
+def historical_control_tower_state(state_snapshot: SystemState | dict) -> ControlTowerStateResponse:
+    state = state_snapshot if isinstance(state_snapshot, SystemState) else SystemState.model_validate(state_snapshot)
+    return control_tower_state(state)
 
 
 def _decision_for_plan(state: SystemState, plan: Plan | None) -> DecisionLog | None:
@@ -401,6 +566,10 @@ def action_view(action: Action) -> ActionView:
     )
 
 
+def constraint_violation_view(item: ConstraintViolation) -> ConstraintViolationView:
+    return ConstraintViolationView(**item.model_dump(mode="json"))
+
+
 def plan_view(plan: Plan | None, decision: DecisionLog | None = None) -> PlanView | None:
     if plan is None:
         return None
@@ -411,6 +580,9 @@ def plan_view(plan: Plan | None, decision: DecisionLog | None = None) -> PlanVie
         status=plan.status.value,
         score=plan.score,
         score_breakdown=plan.score_breakdown,
+        feasible=plan.feasible,
+        violations=[constraint_violation_view(item) for item in plan.violations],
+        mode_rationale=plan.mode_rationale,
         strategy_label=plan.strategy_label,
         generated_by=plan.generated_by,
         approval_required=plan.approval_required,
@@ -449,6 +621,9 @@ def candidate_evaluation_view(item) -> CandidateEvaluationView:
         score=item.score,
         score_breakdown=item.score_breakdown,
         projected_kpis=kpi_view(item.projected_kpis),
+        feasible=item.feasible,
+        violations=[constraint_violation_view(violation) for violation in item.violations],
+        mode_rationale=item.mode_rationale,
         approval_required=item.approval_required,
         approval_reason=item.approval_reason,
         rationale=item.rationale,
@@ -479,6 +654,7 @@ def decision_detail_view(item: DecisionLog) -> DecisionLogDetailView:
         approval_reason=item.approval_reason,
         rationale=item.rationale,
         selection_reason=item.selection_reason,
+        mode_rationale=item.mode_rationale,
         winning_factors=item.winning_factors,
         score_breakdown=item.score_breakdown,
         selected_actions=item.selected_actions,
@@ -665,6 +841,7 @@ def approval_command_result_view(
     *,
     decision_id: str,
     action: str,
+    execution: ExecutionRecord | None = None,
 ) -> ApprovalCommandResultResponse:
     message_map = {
         "approve": "Pending plan approved and applied.",
@@ -679,6 +856,7 @@ def approval_command_result_view(
         message=message_map.get(action, "Approval action processed."),
         latest_plan=latest_plan_view(state),
         pending_approval=pending_approval_view(state),
+        execution=execution_record_view(execution) if execution is not None else None,
         latest_trace=latest_trace_view(state),
         summary=control_tower_summary(state),
     )

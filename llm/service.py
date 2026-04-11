@@ -139,20 +139,34 @@ def _event_context(event: Event | None) -> dict:
     }
 
 
-def _call_json_model(*, prompt: str, schema: dict) -> tuple[dict | None, str | None, str | None]:
+def _call_json_model(
+    *,
+    prompt: str,
+    schema: dict,
+    capability: str = "general",
+) -> tuple[dict | None, str | None, str | None]:
     settings = load_settings()
     if not settings.enabled:
         return None, None, None
+    if capability == "planner" and settings.planner_mode == "deterministic":
+        return None, settings.provider, "planner_mode=deterministic"
     if settings.provider != "gemini":
         return None, settings.provider, f"unsupported provider: {settings.provider}"
-    try:
-        response = GeminiClient(settings).generate_json(
-            prompt=prompt,
-            schema=schema,
-        )
-    except GeminiClientError as exc:
-        return None, settings.provider, str(exc)
-    return response, settings.provider, None
+    last_error: str | None = None
+    client = GeminiClient(settings)
+    for attempt in range(1, settings.retry_attempts + 1):
+        try:
+            response = client.generate_json(
+                prompt=prompt,
+                schema=schema,
+            )
+        except GeminiClientError as exc:
+            last_error = str(exc)
+            if attempt >= settings.retry_attempts:
+                break
+            continue
+        return response, settings.provider, None
+    return None, settings.provider, last_error
 
 
 def _action_catalog(actions: list[Action]) -> list[dict[str, Any]]:
@@ -453,7 +467,11 @@ def enrich_specialist_proposal(
         proposal=proposal,
         state_slice=state_slice,
     )
-    response, provider, error = _call_json_model(prompt=prompt, schema=SPECIALIST_SCHEMA)
+    response, provider, error = _call_json_model(
+        prompt=prompt,
+        schema=SPECIALIST_SCHEMA,
+        capability="specialist",
+    )
     proposal.llm_used = False
     proposal.llm_error = error
     if response is None:
@@ -509,7 +527,11 @@ def generate_candidate_plan_drafts(
         event=event,
         candidate_actions=candidate_actions,
     )
-    response, _, error = _call_json_model(prompt=prompt, schema=PLANNER_CANDIDATES_SCHEMA)
+    response, _, error = _call_json_model(
+        prompt=prompt,
+        schema=PLANNER_CANDIDATES_SCHEMA,
+        capability="planner",
+    )
     if response is None:
         return [], error
 
@@ -552,7 +574,11 @@ def critique_candidate_plans(
         selected_plan=selected_plan,
         evaluations=evaluations,
     )
-    response, _, error = _call_json_model(prompt=prompt, schema=CRITIC_SCHEMA)
+    response, _, error = _call_json_model(
+        prompt=prompt,
+        schema=CRITIC_SCHEMA,
+        capability="critic",
+    )
     if response is None:
         return None, [], False, error
     summary = str(response.get("summary", "")).strip() or None
@@ -572,7 +598,11 @@ def generate_reflection_note(
         run=run,
         decision_log=decision_log,
     )
-    response, _, error = _call_json_model(prompt=prompt, schema=REFLECTION_SCHEMA)
+    response, _, error = _call_json_model(
+        prompt=prompt,
+        schema=REFLECTION_SCHEMA,
+        capability="reflection",
+    )
     if response is None:
         return None, error
     note = ReflectionNote(

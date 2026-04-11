@@ -21,6 +21,7 @@ from policies.explainability import (
     build_winning_factors,
     explain_rejected_actions,
 )
+from policies.constraints import evaluate_plan_constraints, mode_rationale
 from policies.guardrails import approval_required
 from policies.scoring import compute_score
 
@@ -74,9 +75,10 @@ def _strategy_reason(strategy_label: str) -> str:
 
 
 def _ensure_actions(candidate_actions: list[Action]) -> list[Action]:
-    if candidate_actions:
-        return list(candidate_actions)
-    return [
+    ensured = list(candidate_actions)
+    if any(action.action_type == ActionType.NO_OP for action in ensured):
+        return ensured
+    ensured.append(
         Action(
             action_id="act_no_op",
             action_type=ActionType.NO_OP,
@@ -84,7 +86,8 @@ def _ensure_actions(candidate_actions: list[Action]) -> list[Action]:
             reason="no action required",
             priority=0.1,
         )
-    ]
+    )
+    return ensured
 
 
 def _action_limit_for_mode(state: SystemState) -> int:
@@ -155,6 +158,33 @@ def _evaluate_candidate(
     rationale: str,
     llm_used: bool,
 ) -> CandidatePlanEvaluation:
+    selected_mode_rationale = mode_rationale(state, event)
+    violations = evaluate_plan_constraints(
+        state=state,
+        event=event,
+        actions=actions,
+    )
+    feasible = not violations
+    if not feasible:
+        return CandidatePlanEvaluation(
+            strategy_label=strategy_label,
+            action_ids=[action.action_id for action in actions],
+            score=0.0,
+            score_breakdown={
+                "service_level": 0.0,
+                "total_cost": 0.0,
+                "disruption_risk": 0.0,
+                "recovery_speed": 0.0,
+            },
+            projected_kpis=before_kpis.model_copy(deep=True),
+            feasible=False,
+            violations=violations,
+            mode_rationale=selected_mode_rationale,
+            approval_required=False,
+            approval_reason="not evaluated because the candidate plan is infeasible",
+            rationale=rationale,
+            llm_used=llm_used,
+        )
     simulated = simulate_actions(state, actions)
     score, breakdown = compute_score(
         service_level=simulated.kpis.service_level,
@@ -183,6 +213,9 @@ def _evaluate_candidate(
         score=score,
         score_breakdown=breakdown,
         projected_kpis=simulated.kpis,
+        feasible=True,
+        violations=[],
+        mode_rationale=selected_mode_rationale,
         approval_required=needs_approval,
         approval_reason=reason if needs_approval else "no approval required: thresholds not triggered",
         rationale=rationale,
@@ -191,8 +224,10 @@ def _evaluate_candidate(
 
 
 def _select_best_evaluation(evaluations: list[CandidatePlanEvaluation]) -> CandidatePlanEvaluation:
+    feasible_evaluations = [item for item in evaluations if item.feasible]
+    pool = feasible_evaluations or evaluations
     return max(
-        evaluations,
+        pool,
         key=lambda item: (
             item.score,
             -item.projected_kpis.disruption_risk,
@@ -204,8 +239,9 @@ def _select_best_evaluation(evaluations: list[CandidatePlanEvaluation]) -> Candi
 
 
 def _selection_reason(selected: CandidatePlanEvaluation, evaluations: list[CandidatePlanEvaluation]) -> str:
+    infeasible_count = sum(1 for item in evaluations if not item.feasible)
     ordered = sorted(
-        evaluations,
+        [item for item in evaluations if item.feasible] or evaluations,
         key=lambda item: (
             item.score,
             -item.projected_kpis.disruption_risk,
@@ -219,11 +255,48 @@ def _selection_reason(selected: CandidatePlanEvaluation, evaluations: list[Candi
         f"selected {selected.strategy_label} because it produced the strongest deterministic score "
         f"({selected.score:.4f})"
     )
+    if infeasible_count:
+        base = f"{base} after excluding {infeasible_count} infeasible candidate plan(s)"
     if runner_up is None:
         return base
     return (
         f"{base} over {runner_up.strategy_label} ({runner_up.score:.4f}) after applying score, "
         "risk, service-level, and cost tie-breaks"
+    )
+
+
+def _safe_hold_evaluation(
+    *,
+    state: SystemState,
+    event: Event | None,
+    before_kpis,
+    safe_action: Action,
+    infeasible_count: int,
+) -> CandidatePlanEvaluation:
+    score, breakdown = compute_score(
+        service_level=before_kpis.service_level,
+        total_cost=before_kpis.total_cost,
+        disruption_risk=before_kpis.disruption_risk,
+        recovery_speed=before_kpis.recovery_speed,
+        mode=state.mode,
+        baseline_cost=before_kpis.total_cost,
+    )
+    return CandidatePlanEvaluation(
+        strategy_label="safe_hold",
+        action_ids=[safe_action.action_id],
+        score=score,
+        score_breakdown=breakdown,
+        projected_kpis=before_kpis.model_copy(deep=True),
+        feasible=True,
+        violations=[],
+        mode_rationale=mode_rationale(state, event),
+        approval_required=False,
+        approval_reason="no approval required: retaining current state because all candidate plans were infeasible",
+        rationale=(
+            f"no candidate plan satisfied hard constraints; retaining the current network state after excluding "
+            f"{infeasible_count} infeasible candidate plan(s)"
+        ),
+        llm_used=False,
     )
 
 
@@ -261,6 +334,20 @@ class PlannerAgent(BaseAgent):
                 )
             )
 
+        if not any(item.feasible for item in evaluations):
+            safe_action = next(
+                action for action in candidate_actions if action.action_type == ActionType.NO_OP
+            )
+            evaluations.append(
+                _safe_hold_evaluation(
+                    state=state,
+                    event=event,
+                    before_kpis=before_kpis,
+                    safe_action=safe_action,
+                    infeasible_count=len(evaluations),
+                )
+            )
+
         selected_evaluation = _select_best_evaluation(evaluations)
         selected_actions = [by_id[action_id] for action_id in selected_evaluation.action_ids if action_id in by_id]
         summary = build_plan_summary(
@@ -268,6 +355,8 @@ class PlannerAgent(BaseAgent):
             selected_evaluation.projected_kpis,
             selected_evaluation.score_breakdown,
         )
+        if selected_evaluation.mode_rationale:
+            summary = f"{summary} Mode rationale: {selected_evaluation.mode_rationale}."
         plan = Plan(
             plan_id=f"plan_{uuid4().hex[:8]}",
             mode=state.mode,
@@ -275,6 +364,9 @@ class PlannerAgent(BaseAgent):
             actions=selected_actions,
             score=selected_evaluation.score,
             score_breakdown=selected_evaluation.score_breakdown,
+            feasible=selected_evaluation.feasible,
+            violations=selected_evaluation.violations,
+            mode_rationale=selected_evaluation.mode_rationale,
             strategy_label=selected_evaluation.strategy_label,
             generated_by=(
                 "llm_planner"
@@ -304,6 +396,7 @@ class PlannerAgent(BaseAgent):
             selected_actions=[action.action_id for action in selected_actions],
             rejected_actions=rejection_reasons,
             score_breakdown=selected_evaluation.score_breakdown,
+            mode_rationale=selected_evaluation.mode_rationale,
             rationale=summary,
             candidate_evaluations=evaluations,
             selection_reason=_selection_reason(selected_evaluation, evaluations),
