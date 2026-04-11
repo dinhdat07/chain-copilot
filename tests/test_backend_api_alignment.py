@@ -203,3 +203,32 @@ def test_decision_detail_and_reflections_contract(tmp_path: Path) -> None:
     reflections_payload = reflections_response.json()
     assert "items" in reflections_payload
     assert "scenarios" in reflections_payload
+
+
+def test_persisted_decision_detail_survives_runtime_replacement(tmp_path: Path) -> None:
+    store = SQLiteStore(tmp_path / "chaincopilot-backend-api.db")
+    api.replace_runtime(
+        store=store,
+        state=load_initial_state(),
+        graph=build_graph(),
+        runner=ScenarioRunner(store=store),
+    )
+    client = TestClient(api.app)
+
+    scenario_response = client.post("/api/v1/scenarios/run", json={"scenario_name": "supplier_delay"})
+    assert scenario_response.status_code == 200
+    decision_id = scenario_response.json()["decision_id"]
+    assert decision_id is not None
+
+    api.replace_runtime(
+        store=store,
+        state=load_initial_state(),
+        graph=build_graph(),
+        runner=ScenarioRunner(store=store),
+    )
+    restarted_client = TestClient(api.app)
+
+    detail_response = restarted_client.get(f"/api/v1/decision-logs/{decision_id}")
+    assert detail_response.status_code == 200
+    payload = detail_response.json()["item"]
+    assert payload["decision_id"] == decision_id

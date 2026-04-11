@@ -43,7 +43,6 @@ from app_api.services import (
     decision_summary_view,
     event_envelope_view,
     execution_record_view,
-    find_decision,
     inventory_rows,
     latest_trace_view,
     pending_approval_view,
@@ -58,7 +57,7 @@ from app_api.services import (
     trace_view_from_record,
     historical_control_tower_state,
 )
-from core.models import OrchestrationTrace
+from core.models import DecisionLog, OrchestrationTrace
 from core.runtime_records import RunRecord
 
 
@@ -137,13 +136,19 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
     def get_decision_logs() -> DecisionLogListResponse:
         runtime = runtime_getter()
         return DecisionLogListResponse(
-            items=[decision_summary_view(item) for item in reversed(runtime.state.decision_logs)]
+            items=[
+                decision_summary_view(DecisionLog.model_validate(item))
+                for item in runtime.store.list_decision_logs()
+            ]
         )
 
     @router.get("/decision-logs/{decision_id}", response_model=DecisionLogDetailResponse)
     def get_decision_log_detail(decision_id: str) -> DecisionLogDetailResponse:
         runtime = runtime_getter()
-        return DecisionLogDetailResponse(item=decision_detail_view(find_decision(runtime.state, decision_id)))
+        payload = runtime.store.get_decision_log(decision_id)
+        if payload is None:
+            raise_not_found("decision", decision_id)
+        return DecisionLogDetailResponse(item=decision_detail_view(DecisionLog.model_validate(payload)))
 
     @router.get("/trace/latest", response_model=TraceResponse)
     def get_latest_trace() -> TraceResponse:
