@@ -31,7 +31,7 @@ streamlit run ui/dashboard.py
 ## API
 
 ```bash
-uvicorn api:app --reload
+python run_api.py
 ```
 
 ## Scenarios
