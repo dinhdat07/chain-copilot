@@ -4,7 +4,8 @@ import json
 import sqlite3
 from pathlib import Path
 
-from core.models import DecisionLog, ScenarioRun, SystemState
+from core.models import DecisionLog, OrchestrationTrace, ScenarioRun, SystemState
+from core.runtime_records import EventEnvelope, ExecutionRecord, RunRecord
 
 
 class SQLiteStore:
@@ -41,6 +42,39 @@ class SQLiteStore:
                 )
                 """
             )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS event_log (
+                    event_id TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS run_records (
+                    run_id TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS traces (
+                    run_id TEXT PRIMARY KEY,
+                    trace_id TEXT,
+                    payload TEXT NOT NULL
+                )
+                """
+            )
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS execution_records (
+                    execution_id TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL
+                )
+                """
+            )
 
     def save_state(self, state: SystemState) -> None:
         payload = json.dumps(state.model_dump(mode="json"), ensure_ascii=True)
@@ -73,8 +107,76 @@ class SQLiteStore:
                 (run.run_id, payload),
             )
 
+    def save_event_envelope(self, event: EventEnvelope) -> None:
+        payload = json.dumps(event.model_dump(mode="json"), ensure_ascii=True)
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO event_log(event_id, payload) VALUES(?, ?)",
+                (event.event_id, payload),
+            )
+
+    def get_event_envelope(self, event_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload FROM event_log WHERE event_id = ?",
+                (event_id,),
+            ).fetchone()
+        return None if row is None else json.loads(row[0])
+
+    def save_run_record(self, run: RunRecord) -> None:
+        payload = json.dumps(run.model_dump(mode="json"), ensure_ascii=True)
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO run_records(run_id, payload) VALUES(?, ?)",
+                (run.run_id, payload),
+            )
+
+    def get_run_record(self, run_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload FROM run_records WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+        return None if row is None else json.loads(row[0])
+
+    def save_trace(self, run_id: str, trace: OrchestrationTrace) -> None:
+        payload = json.dumps(trace.model_dump(mode="json"), ensure_ascii=True)
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO traces(run_id, trace_id, payload) VALUES(?, ?, ?)",
+                (run_id, trace.trace_id, payload),
+            )
+
+    def get_trace(self, run_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload FROM traces WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+        return None if row is None else json.loads(row[0])
+
+    def save_execution_record(self, execution: ExecutionRecord) -> None:
+        payload = json.dumps(execution.model_dump(mode="json"), ensure_ascii=True)
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO execution_records(execution_id, payload) VALUES(?, ?)",
+                (execution.execution_id, payload),
+            )
+
+    def get_execution_record(self, execution_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload FROM execution_records WHERE execution_id = ?",
+                (execution_id,),
+            ).fetchone()
+        return None if row is None else json.loads(row[0])
+
     def clear_all(self) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM decision_logs")
             conn.execute("DELETE FROM state_snapshots")
             conn.execute("DELETE FROM scenario_runs")
+            conn.execute("DELETE FROM event_log")
+            conn.execute("DELETE FROM run_records")
+            conn.execute("DELETE FROM traces")
+            conn.execute("DELETE FROM execution_records")

@@ -2,12 +2,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from uuid import uuid4
 
 from fastapi import HTTPException
 
-from core.enums import ApprovalStatus
+from core.enums import ApprovalStatus, EventType
 from core.memory import SQLiteStore
-from core.models import Action, DecisionLog, Event, Plan, SystemState
+from core.models import Action, DecisionLog, Event, OrchestrationTrace, Plan, SystemState
+from core.runtime_records import EventClass, EventEnvelope, ExecutionRecord, RunRecord, RunType
+from core.runtime_tracking import (
+    build_execution_record,
+    build_run_record,
+    clone_trace_for_run,
+    new_correlation_id,
+    new_event_envelope_id,
+    new_run_id,
+)
 from core.state import clone_state, load_initial_state, recompute_kpis, state_summary, utc_now
 from orchestrator.graph import build_graph
 from orchestrator.service import (
@@ -31,12 +41,19 @@ from app_api.schemas import (
     ControlTowerSummaryResponse,
     DecisionLogDetailView,
     DecisionLogSummaryView,
+    EventEnvelopeView,
+    EventIngestResponse,
+    EventIngestRequest,
     EventView,
+    ExecutionDetailResponse,
+    ExecutionRecordView,
     InventoryRowView,
     KPIView,
     PendingApprovalView,
     PlanView,
     ReflectionView,
+    RunDetailResponse,
+    RunView,
     RouteDecisionView,
     ScenarioOutcomeView,
     SupplierRowView,
@@ -50,12 +67,14 @@ def _error_detail(
     *,
     details: dict[str, Any] | None = None,
     retryable: bool = False,
+    correlation_id: str | None = None,
 ) -> dict[str, Any]:
     return {
         "code": code,
         "message": message,
         "details": details or {},
         "retryable": retryable,
+        "correlation_id": correlation_id,
     }
 
 
@@ -111,6 +130,55 @@ class ControlTowerRuntime:
             return None
         return self.state.decision_logs[-1].decision_id
 
+    def _latest_decision(self) -> DecisionLog | None:
+        return self.state.decision_logs[-1] if self.state.decision_logs else None
+
+    def _prepare_approval_trace(self, run_id: str) -> None:
+        now = utc_now()
+        self.state.run_id = run_id
+        self.state.latest_trace = OrchestrationTrace(
+            trace_id=f"trace_{uuid4().hex[:8]}",
+            run_id=run_id,
+            started_at=now,
+            mode_before=self.state.mode.value,
+            current_branch="approval",
+        )
+
+    def _persist_runtime_artifacts(
+        self,
+        *,
+        run_id: str,
+        run_type: RunType,
+        started_at,
+        parent_run_id: str | None,
+        envelope: EventEnvelope | None = None,
+    ) -> tuple[RunRecord, ExecutionRecord | None]:
+        decision = self._latest_decision()
+        execution = build_execution_record(
+            run_id=run_id,
+            state=self.state,
+            decision=decision,
+        )
+        if execution is not None:
+            self.store.save_execution_record(execution)
+        run_record = build_run_record(
+            run_id=run_id,
+            run_type=run_type,
+            state=self.state,
+            started_at=started_at,
+            parent_run_id=parent_run_id,
+            envelope=envelope,
+            execution_id=execution.execution_id if execution is not None else None,
+        )
+        self.store.save_run_record(run_record)
+        trace = clone_trace_for_run(self.state.latest_trace, run_id)
+        if trace is not None:
+            self.store.save_trace(run_id, trace)
+        self.store.save_state(self.state)
+        if decision is not None:
+            self.store.save_decision_log(decision)
+        return run_record, execution
+
     def legacy_response_payload(self) -> dict[str, Any]:
         return {
             "summary": state_summary(self.state),
@@ -120,18 +188,115 @@ class ControlTowerRuntime:
         }
 
     def run_daily(self) -> SystemState:
+        started_at = utc_now()
+        parent_run_id = self.state.run_id
+        run_id = new_run_id()
         try:
-            self.state = run_daily_plan(self.state, self.store, graph=self.graph)
+            self.state = run_daily_plan(self.state, self.store, graph=self.graph, run_id=run_id)
         except PendingApprovalError as exc:
             raise_conflict(str(exc), code="pending_approval")
+        self._persist_runtime_artifacts(
+            run_id=run_id,
+            run_type=RunType.DAILY_CYCLE,
+            started_at=started_at,
+            parent_run_id=parent_run_id,
+        )
         return self.state
 
     def ingest_event(self, event: Event) -> SystemState:
-        self.state = self.graph.invoke(self.state, event)
-        self.store.save_state(self.state)
-        if self.state.decision_logs:
-            self.store.save_decision_log(self.state.decision_logs[-1])
+        started_at = utc_now()
+        parent_run_id = self.state.run_id
+        run_id = new_run_id()
+        envelope = EventEnvelope(
+            event_id=event.event_id,
+            event_class=EventClass.DOMAIN,
+            event_type=event.type.value,
+            source=event.source,
+            occurred_at=event.occurred_at,
+            ingested_at=event.detected_at,
+            correlation_id=new_correlation_id("event"),
+            causation_id=None,
+            idempotency_key=event.dedupe_key,
+            severity=event.severity,
+            entity_ids=event.entity_ids,
+            payload=event.payload,
+        )
+        self.store.save_event_envelope(envelope)
+        self.state = self.graph.invoke(self.state, event, run_id=run_id)
+        self._persist_runtime_artifacts(
+            run_id=run_id,
+            run_type=RunType.EVENT_RESPONSE,
+            started_at=started_at,
+            parent_run_id=parent_run_id,
+            envelope=envelope,
+        )
         return self.state
+
+    def ingest_envelope(self, request: EventIngestRequest) -> tuple[EventEnvelope, RunRecord | None, ExecutionRecord | None]:
+        occurred_at = request.occurred_at or utc_now()
+        ingested_at = utc_now()
+        correlation_id = request.correlation_id or new_correlation_id(request.event_class.value)
+        envelope = EventEnvelope(
+            event_id=new_event_envelope_id(),
+            event_class=request.event_class,
+            event_type=request.event_type,
+            source=request.source,
+            occurred_at=occurred_at,
+            ingested_at=ingested_at,
+            correlation_id=correlation_id,
+            causation_id=request.causation_id,
+            idempotency_key=request.idempotency_key or f"{request.event_type}:{request.entity_ids}:{request.payload}",
+            severity=request.severity,
+            entity_ids=request.entity_ids,
+            payload=request.payload,
+        )
+        self.store.save_event_envelope(envelope)
+        started_at = ingested_at
+        parent_run_id = self.state.run_id
+        if request.event_class == EventClass.SYSTEM:
+            return envelope, None, None
+        if request.event_class == EventClass.COMMAND:
+            if request.event_type != "plan_requested":
+                raise HTTPException(
+                    status_code=422,
+                    detail=_error_detail(
+                        code="unsupported_command_event",
+                        message="command event_type must be plan_requested",
+                        correlation_id=correlation_id,
+                    ),
+                )
+            run_id = new_run_id()
+            try:
+                self.state = run_daily_plan(self.state, self.store, graph=self.graph, run_id=run_id)
+            except PendingApprovalError as exc:
+                raise_conflict(str(exc), code="pending_approval")
+            return (envelope, *self._persist_runtime_artifacts(
+                run_id=run_id,
+                run_type=RunType.DAILY_CYCLE,
+                started_at=started_at,
+                parent_run_id=parent_run_id,
+                envelope=envelope,
+            ))
+        try:
+            event = build_event_from_envelope(envelope)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=422,
+                detail=_error_detail(
+                    code="unsupported_domain_event",
+                    message=str(exc),
+                    correlation_id=correlation_id,
+                ),
+            ) from exc
+        run_id = new_run_id()
+        self.state = self.graph.invoke(self.state, event, run_id=run_id)
+        return (envelope, *self._persist_runtime_artifacts(
+            run_id=run_id,
+            run_type=RunType.EVENT_RESPONSE,
+            started_at=started_at,
+            parent_run_id=parent_run_id,
+            envelope=envelope,
+        ))
 
     def run_scenario(self, scenario_name: str, seed: int) -> SystemState:
         if scenario_name not in list_scenarios():
@@ -143,13 +308,17 @@ class ControlTowerRuntime:
         return self.state
 
     def approval_command(self, decision_id: str, action: str) -> SystemState:
+        started_at = utc_now()
+        parent_run_id = self.state.run_id
+        run_id = new_run_id()
+        self._prepare_approval_trace(run_id)
         try:
             if action == "approve":
-                self.state = approve_pending_plan(self.state, self.store, decision_id, True)
+                self.state = approve_pending_plan(self.state, self.store, decision_id, True, run_id=run_id)
             elif action == "reject":
-                self.state = approve_pending_plan(self.state, self.store, decision_id, False)
+                self.state = approve_pending_plan(self.state, self.store, decision_id, False, run_id=run_id)
             elif action == "safer_plan":
-                self.state = request_safer_plan(self.state, self.store, decision_id)
+                self.state = request_safer_plan(self.state, self.store, decision_id, run_id=run_id)
             else:
                 raise HTTPException(
                     status_code=422,
@@ -160,6 +329,12 @@ class ControlTowerRuntime:
                 )
         except ValueError as exc:
             raise_not_found("decision", decision_id)
+        self._persist_runtime_artifacts(
+            run_id=run_id,
+            run_type=RunType.APPROVAL_RESOLUTION,
+            started_at=started_at,
+            parent_run_id=parent_run_id,
+        )
         return self.state
 
     def what_if(self, scenario_name: str, seed: int) -> dict[str, Any]:
@@ -182,6 +357,27 @@ def make_runtime(store: SQLiteStore | None = None) -> ControlTowerRuntime:
 
 def kpi_view(kpis) -> KPIView:
     return KPIView(**kpis.model_dump())
+
+
+def event_envelope_view(item: EventEnvelope | dict) -> EventEnvelopeView:
+    payload = item if isinstance(item, EventEnvelope) else EventEnvelope.model_validate(item)
+    if isinstance(payload, EventEnvelope):
+        payload = payload
+    return EventEnvelopeView(**payload.model_dump(mode="json"))
+
+
+def run_record_view(item: RunRecord | dict) -> RunView:
+    payload = item if isinstance(item, RunRecord) else RunRecord.model_validate(item)
+    if isinstance(payload, RunRecord):
+        payload = payload
+    return RunView(**payload.model_dump(mode="json"))
+
+
+def execution_record_view(item: ExecutionRecord | dict) -> ExecutionRecordView:
+    payload = item if isinstance(item, ExecutionRecord) else ExecutionRecord.model_validate(item)
+    if isinstance(payload, ExecutionRecord):
+        payload = payload
+    return ExecutionRecordView(**payload.model_dump(mode="json"))
 
 
 def _decision_for_plan(state: SystemState, plan: Plan | None) -> DecisionLog | None:
@@ -497,6 +693,7 @@ def latest_trace_view(state: SystemState) -> TraceView:
     latest_event = state.active_events[-1] if state.active_events else None
     if trace is None:
         return TraceView(
+            run_id=state.run_id,
             mode=state.mode.value,
             current_branch=state.mode.value,
             event=event_view(latest_event) if latest_event else None,
@@ -517,11 +714,14 @@ def latest_trace_view(state: SystemState) -> TraceView:
 
     steps = [
         AgentStepView(
+            step_id=step.step_id,
+            sequence=step.sequence,
             agent=step.node_key,
             node_type=step.node_type,
             status=step.status,
             started_at=step.started_at,
             completed_at=step.completed_at,
+            duration_ms=step.duration_ms,
             mode_snapshot=step.mode_snapshot,
             summary=step.summary,
             reasoning_source=step.reasoning_source,
@@ -534,10 +734,13 @@ def latest_trace_view(state: SystemState) -> TraceView:
             tradeoffs=step.tradeoffs,
             llm_used=step.llm_used,
             llm_error=step.llm_error,
+            fallback_used=step.fallback_used,
+            fallback_reason=step.fallback_reason,
         )
         for step in trace.steps
     ]
     return TraceView(
+        run_id=trace.run_id,
         trace_id=trace.trace_id,
         status=trace.status,
         started_at=trace.started_at,
@@ -572,6 +775,69 @@ def latest_trace_view(state: SystemState) -> TraceView:
         approval_reason=trace.approval_reason,
         execution_status=trace.execution_status,
         critic_summary=trace.critic_summary or (latest_decision.critic_summary if latest_decision else None),
+    )
+
+
+def trace_view_from_record(trace: OrchestrationTrace, run: RunRecord | None = None) -> TraceView:
+    steps = [
+        AgentStepView(
+            step_id=step.step_id,
+            sequence=step.sequence,
+            agent=step.node_key,
+            node_type=step.node_type,
+            status=step.status,
+            started_at=step.started_at,
+            completed_at=step.completed_at,
+            duration_ms=step.duration_ms,
+            mode_snapshot=step.mode_snapshot,
+            summary=step.summary,
+            reasoning_source=step.reasoning_source,
+            input_snapshot=step.input_snapshot,
+            output_snapshot=step.output_snapshot,
+            observations=step.observations,
+            risks=step.risks,
+            downstream_impacts=step.downstream_impacts,
+            recommended_action_ids=step.recommended_action_ids,
+            tradeoffs=step.tradeoffs,
+            llm_used=step.llm_used,
+            llm_error=step.llm_error,
+            fallback_used=step.fallback_used,
+            fallback_reason=step.fallback_reason,
+        )
+        for step in trace.steps
+    ]
+    return TraceView(
+        run_id=trace.run_id,
+        trace_id=trace.trace_id,
+        status=trace.status,
+        started_at=trace.started_at,
+        completed_at=trace.completed_at,
+        mode_before=trace.mode_before,
+        mode_after=trace.mode_after,
+        mode=trace.mode_after or trace.mode_before,
+        current_branch=trace.current_branch,
+        terminal_stage=trace.terminal_stage,
+        event=event_view(trace.event) if trace.event else None,
+        route_decisions=[
+            RouteDecisionView(
+                from_node=item.from_node,
+                outcome=item.outcome,
+                to_node=item.to_node,
+                reason=item.reason,
+            )
+            for item in trace.route_decisions
+        ],
+        steps=steps,
+        latest_plan=None,
+        decision_id=run.decision_id if run else trace.decision_id,
+        selected_strategy=trace.selected_strategy or (run.selected_plan_summary.strategy_label if run and run.selected_plan_summary else None),
+        candidate_count=trace.candidate_count,
+        selection_reason=trace.selection_reason,
+        candidate_evaluations=[],
+        approval_pending=trace.approval_pending,
+        approval_reason=trace.approval_reason,
+        execution_status=trace.execution_status,
+        critic_summary=trace.critic_summary,
     )
 
 
@@ -669,4 +935,22 @@ def build_event_from_request(
         detected_at=timestamp,
         payload=payload,
         dedupe_key=f"{event_type.value}:{entity_ids}:{payload}",
+    )
+
+
+def build_event_from_envelope(envelope: EventEnvelope) -> Event:
+    try:
+        event_type = EventType(envelope.event_type)
+    except ValueError as exc:
+        raise ValueError(f"unsupported domain event type: {envelope.event_type}") from exc
+    return Event(
+        event_id=envelope.event_id,
+        type=event_type,
+        source=envelope.source,
+        severity=envelope.severity,
+        entity_ids=envelope.entity_ids,
+        occurred_at=envelope.occurred_at,
+        detected_at=envelope.ingested_at,
+        payload=envelope.payload,
+        dedupe_key=envelope.idempotency_key,
     )

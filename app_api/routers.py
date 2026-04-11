@@ -12,13 +12,17 @@ from app_api.schemas import (
     ControlTowerSummaryResponse,
     DecisionLogDetailResponse,
     DecisionLogListResponse,
+    EventIngestRequest,
+    EventIngestResponse,
     EventListResponse,
     EventRequest,
+    ExecutionDetailResponse,
     InventoryListResponse,
     LegacyApprovalRequest,
     PendingApprovalResponse,
     PlanDetailResponse,
     ReflectionListResponse,
+    RunDetailResponse,
     ScenarioRequest,
     SupplierListResponse,
     TraceResponse,
@@ -33,15 +37,21 @@ from app_api.services import (
     control_tower_summary,
     decision_detail_view,
     decision_summary_view,
+    event_envelope_view,
+    execution_record_view,
     find_decision,
     inventory_rows,
     latest_trace_view,
     pending_approval_view,
     plan_view,
     reflection_views,
+    run_record_view,
     scenario_outcomes,
     supplier_rows,
+    trace_view_from_record,
 )
+from core.models import OrchestrationTrace
+from core.runtime_records import RunRecord
 
 
 def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRouter:
@@ -158,6 +168,47 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
         )
         runtime.ingest_event(event)
         return runtime.legacy_response_payload()
+
+    @router.post("/events/ingest", response_model=EventIngestResponse)
+    def ingest_envelope(request: EventIngestRequest) -> EventIngestResponse:
+        runtime = runtime_getter()
+        envelope, run_record, execution = runtime.ingest_envelope(request)
+        return EventIngestResponse(
+            event=event_envelope_view(envelope),
+            accepted=True,
+            run_id=None if run_record is None else run_record.run_id,
+            execution_id=None if execution is None else execution.execution_id,
+        )
+
+    @router.get("/runs/{run_id}", response_model=RunDetailResponse)
+    def get_run(run_id: str) -> RunDetailResponse:
+        runtime = runtime_getter()
+        payload = runtime.store.get_run_record(run_id)
+        if payload is None:
+            raise HTTPException(status_code=404, detail={"code": "run_not_found", "message": "run not found"})
+        return RunDetailResponse(item=run_record_view(payload))
+
+    @router.get("/runs/{run_id}/trace", response_model=TraceResponse)
+    def get_run_trace(run_id: str) -> TraceResponse:
+        runtime = runtime_getter()
+        trace_payload = runtime.store.get_trace(run_id)
+        if trace_payload is None:
+            raise HTTPException(status_code=404, detail={"code": "trace_not_found", "message": "trace not found"})
+        run_payload = runtime.store.get_run_record(run_id)
+        trace = OrchestrationTrace.model_validate(trace_payload)
+        run = RunRecord.model_validate(run_payload) if run_payload is not None else None
+        return TraceResponse(item=trace_view_from_record(trace, run=run))
+
+    @router.get("/execution/{execution_id}", response_model=ExecutionDetailResponse)
+    def get_execution(execution_id: str) -> ExecutionDetailResponse:
+        runtime = runtime_getter()
+        payload = runtime.store.get_execution_record(execution_id)
+        if payload is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "execution_not_found", "message": "execution not found"},
+            )
+        return ExecutionDetailResponse(item=execution_record_view(payload))
 
     @router.post("/scenarios/run")
     def run_scenario(request: ScenarioRequest) -> dict:

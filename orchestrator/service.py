@@ -80,11 +80,14 @@ def _append_approval_trace(
     )
     state.latest_trace.steps.append(
         TraceStep(
+            step_id=f"step_{uuid4().hex[:8]}",
+            sequence=len(state.latest_trace.steps) + 1,
             node_key="approval_resolution",
             node_type="human_gate",
             status="completed",
             started_at=now,
             completed_at=now,
+            duration_ms=0.0,
             mode_snapshot=state.mode.value,
             summary=summary,
             reasoning_source="human_approval_action",
@@ -159,9 +162,10 @@ def run_daily_plan(
     state: SystemState,
     store: SQLiteStore,
     graph: Any | None = None,
+    run_id: str | None = None,
 ) -> SystemState:
     ensure_no_pending_plan(state)
-    updated = (graph or build_graph()).invoke(state, None)
+    updated = (graph or build_graph()).invoke(state, None, run_id=run_id)
     _save_state(updated, store)
     return updated
 
@@ -176,7 +180,10 @@ def approve_pending_plan(
     store: SQLiteStore,
     decision_id: str,
     approve: bool,
+    run_id: str | None = None,
 ) -> SystemState:
+    if run_id is not None:
+        state.run_id = run_id
     decision_log = _current_pending_decision(state, decision_id)
     pending_plan = state.pending_plan
     assert pending_plan is not None
@@ -222,7 +229,10 @@ def request_safer_plan(
     state: SystemState,
     store: SQLiteStore,
     decision_id: str,
+    run_id: str | None = None,
 ) -> SystemState:
+    if run_id is not None:
+        state.run_id = run_id
     previous_decision = _current_pending_decision(state, decision_id)
     if state.pending_plan is None:
         raise ValueError("no pending decision")

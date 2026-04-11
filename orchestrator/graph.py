@@ -14,6 +14,7 @@ from agents.risk import RiskAgent
 from agents.supplier import SupplierAgent
 from core.enums import ApprovalStatus, Mode, PlanStatus
 from core.models import AgentProposal, Event, OrchestrationTrace, SystemState, TraceRouteDecision, TraceStep
+from core.runtime_tracking import new_run_id
 from core.state import recompute_kpis, utc_now
 from langgraph.graph import END, START, StateGraph
 from orchestrator.router import route_after_critic, route_after_planner, route_after_risk
@@ -72,6 +73,8 @@ class LangGraphControlTower:
             return
         state.latest_trace.steps.append(
             TraceStep(
+                step_id=f"step_{uuid4().hex[:8]}",
+                sequence=len(state.latest_trace.steps) + 1,
                 node_key=node_key,
                 node_type=node_type,
                 started_at=utc_now(),
@@ -103,6 +106,10 @@ class LangGraphControlTower:
                 continue
             step.completed_at = utc_now()
             step.status = "completed"
+            step.duration_ms = round(
+                max((step.completed_at - step.started_at).total_seconds() * 1000.0, 0.0),
+                2,
+            )
             step.summary = summary
             step.reasoning_source = reasoning_source
             step.observations = observations or []
@@ -112,6 +119,8 @@ class LangGraphControlTower:
             step.tradeoffs = tradeoffs or []
             step.llm_used = llm_used
             step.llm_error = llm_error
+            step.fallback_used = bool(llm_error)
+            step.fallback_reason = llm_error
             step.output_snapshot = output_snapshot or {}
             return
 
@@ -415,7 +424,8 @@ class LangGraphControlTower:
         graph.add_edge("execution", END)
         return graph.compile()
 
-    def invoke(self, state: SystemState, event: Event | None = None) -> SystemState:
+    def invoke(self, state: SystemState, event: Event | None = None, run_id: str | None = None) -> SystemState:
+        state.run_id = run_id or new_run_id()
         result = self.graph.invoke(
             {
                 "state": state,

@@ -199,11 +199,14 @@ class TraceRouteDecision(BaseModel):
 
 
 class TraceStep(BaseModel):
+    step_id: str | None = None
+    sequence: int = 0
     node_key: str
     node_type: str
     status: str = "running"
     started_at: datetime
     completed_at: datetime | None = None
+    duration_ms: float | None = Field(default=None, ge=0.0)
     mode_snapshot: str
     input_snapshot: dict[str, Any] = Field(default_factory=dict)
     output_snapshot: dict[str, Any] = Field(default_factory=dict)
@@ -216,6 +219,8 @@ class TraceStep(BaseModel):
     tradeoffs: list[str] = Field(default_factory=list)
     llm_used: bool = False
     llm_error: str | None = None
+    fallback_used: bool = False
+    fallback_reason: str | None = None
 
 
 class OrchestrationTrace(BaseModel):

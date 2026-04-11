@@ -6,6 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from core.enums import EventType
+from core.runtime_records import DispatchMode, EventClass, ExecutionStatus, RunStatus, RunType
 
 
 class ScenarioRequest(BaseModel):
@@ -34,6 +35,19 @@ class ApprovalCommandRequest(BaseModel):
     action: Literal["approve", "reject", "safer_plan"]
 
 
+class EventIngestRequest(BaseModel):
+    event_class: EventClass
+    event_type: str
+    source: str = "api"
+    occurred_at: datetime | None = None
+    correlation_id: str | None = None
+    causation_id: str | None = None
+    idempotency_key: str | None = None
+    severity: float = Field(default=0.0, ge=0.0, le=1.0)
+    entity_ids: list[str] = Field(default_factory=list)
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
 class KPIView(BaseModel):
     service_level: float
     total_cost: float
@@ -60,6 +74,21 @@ class EventView(BaseModel):
     entity_ids: list[str] = Field(default_factory=list)
     occurred_at: datetime
     detected_at: datetime
+    payload: dict[str, Any] = Field(default_factory=dict)
+
+
+class EventEnvelopeView(BaseModel):
+    event_id: str
+    event_class: str
+    event_type: str
+    source: str
+    occurred_at: datetime
+    ingested_at: datetime
+    correlation_id: str
+    causation_id: str | None = None
+    idempotency_key: str
+    severity: float
+    entity_ids: list[str] = Field(default_factory=list)
     payload: dict[str, Any] = Field(default_factory=dict)
 
 
@@ -210,11 +239,14 @@ class SupplierRowView(BaseModel):
 
 
 class AgentStepView(BaseModel):
+    step_id: str | None = None
+    sequence: int = 0
     agent: str
     node_type: str
     status: str
     started_at: datetime
     completed_at: datetime | None = None
+    duration_ms: float | None = None
     mode_snapshot: str
     summary: str
     reasoning_source: str = ""
@@ -227,6 +259,8 @@ class AgentStepView(BaseModel):
     tradeoffs: list[str] = Field(default_factory=list)
     llm_used: bool = False
     llm_error: str | None = None
+    fallback_used: bool = False
+    fallback_reason: str | None = None
 
 
 class RouteDecisionView(BaseModel):
@@ -237,6 +271,7 @@ class RouteDecisionView(BaseModel):
 
 
 class TraceView(BaseModel):
+    run_id: str | None = None
     trace_id: str | None = None
     status: str = "idle"
     started_at: datetime | None = None
@@ -259,6 +294,68 @@ class TraceView(BaseModel):
     approval_reason: str = ""
     execution_status: str | None = None
     critic_summary: str | None = None
+
+
+class SelectedPlanSummaryView(BaseModel):
+    plan_id: str
+    strategy_label: str | None = None
+    generated_by: str | None = None
+    approval_required: bool = False
+    approval_reason: str = ""
+    score: float = 0.0
+    action_ids: list[str] = Field(default_factory=list)
+
+
+class ExecutionSummaryView(BaseModel):
+    status: str
+    dispatch_mode: str
+    action_ids: list[str] = Field(default_factory=list)
+
+
+class RunView(BaseModel):
+    run_id: str
+    run_type: RunType
+    parent_run_id: str | None = None
+    correlation_id: str
+    trigger_event_id: str | None = None
+    input_event_ids: list[str] = Field(default_factory=list)
+    mode_before: str
+    mode_after: str
+    status: RunStatus
+    started_at: datetime
+    completed_at: datetime | None = None
+    duration_ms: float = 0.0
+    decision_id: str | None = None
+    selected_plan_id: str | None = None
+    execution_id: str | None = None
+    approval_status: str | None = None
+    llm_fallback_used: bool = False
+    llm_fallback_reason: str | None = None
+    selected_plan_summary: SelectedPlanSummaryView | None = None
+    execution_summary: ExecutionSummaryView | None = None
+
+
+class ExecutionReceiptView(BaseModel):
+    receipt_id: str
+    action_id: str
+    status: str
+    detail: str = ""
+
+
+class ExecutionRecordView(BaseModel):
+    execution_id: str
+    run_id: str
+    decision_id: str | None = None
+    plan_id: str | None = None
+    status: ExecutionStatus
+    dispatch_mode: DispatchMode
+    dry_run: bool = False
+    target_system: str
+    action_ids: list[str] = Field(default_factory=list)
+    receipts: list[ExecutionReceiptView] = Field(default_factory=list)
+    failure_reason: str | None = None
+    created_at: datetime
+    updated_at: datetime
 
 
 class ReflectionView(BaseModel):
@@ -321,6 +418,13 @@ class EventListResponse(BaseModel):
     total: int
 
 
+class EventIngestResponse(BaseModel):
+    event: EventEnvelopeView
+    accepted: bool = True
+    run_id: str | None = None
+    execution_id: str | None = None
+
+
 class PlanDetailResponse(BaseModel):
     item: PlanView | None = None
 
@@ -345,6 +449,14 @@ class TraceResponse(BaseModel):
     item: TraceView
 
 
+class RunDetailResponse(BaseModel):
+    item: RunView
+
+
+class ExecutionDetailResponse(BaseModel):
+    item: ExecutionRecordView
+
+
 class ReflectionListResponse(BaseModel):
     items: list[ReflectionView]
     scenarios: list[ScenarioOutcomeView]
@@ -356,6 +468,7 @@ class ErrorResponse(BaseModel):
     message: str
     details: dict[str, Any] = Field(default_factory=dict)
     retryable: bool = False
+    correlation_id: str | None = None
 
 
 ApprovalCommandResultResponse.model_rebuild()
