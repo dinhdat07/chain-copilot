@@ -370,11 +370,20 @@ def run_record_view(item: RunRecord | dict) -> RunView:
     return RunView(**payload.model_dump(mode="json"))
 
 
+def run_record_list_view(items: list[RunRecord | dict]) -> list[RunView]:
+    return [run_record_view(item) for item in items]
+
+
 def execution_record_view(item: ExecutionRecord | dict) -> ExecutionRecordView:
     payload = item if isinstance(item, ExecutionRecord) else ExecutionRecord.model_validate(item)
     if isinstance(payload, ExecutionRecord):
         payload = payload
     return ExecutionRecordView(**payload.model_dump(mode="json"))
+
+
+def historical_control_tower_state(state_snapshot: SystemState | dict) -> ControlTowerStateResponse:
+    state = state_snapshot if isinstance(state_snapshot, SystemState) else SystemState.model_validate(state_snapshot)
+    return control_tower_state(state)
 
 
 def _decision_for_plan(state: SystemState, plan: Plan | None) -> DecisionLog | None:

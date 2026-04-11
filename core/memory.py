@@ -139,6 +139,23 @@ class SQLiteStore:
             ).fetchone()
         return None if row is None else json.loads(row[0])
 
+    def list_run_records(self, limit: int | None = None) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT payload FROM run_records").fetchall()
+        items = [json.loads(row[0]) for row in rows]
+        items.sort(key=lambda item: item.get("started_at", ""), reverse=True)
+        if limit is None or limit < 0:
+            return items
+        return items[:limit]
+
+    def get_state_snapshot(self, run_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload FROM state_snapshots WHERE run_id = ?",
+                (run_id,),
+            ).fetchone()
+        return None if row is None else json.loads(row[0])
+
     def save_trace(self, run_id: str, trace: OrchestrationTrace) -> None:
         payload = json.dumps(trace.model_dump(mode="json"), ensure_ascii=True)
         with self._connect() as conn:

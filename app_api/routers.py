@@ -23,6 +23,8 @@ from app_api.schemas import (
     PlanDetailResponse,
     ReflectionListResponse,
     RunDetailResponse,
+    RunListResponse,
+    RunStateResponse,
     ScenarioRequest,
     SupplierListResponse,
     TraceResponse,
@@ -46,9 +48,11 @@ from app_api.services import (
     plan_view,
     reflection_views,
     run_record_view,
+    run_record_list_view,
     scenario_outcomes,
     supplier_rows,
     trace_view_from_record,
+    historical_control_tower_state,
 )
 from core.models import OrchestrationTrace
 from core.runtime_records import RunRecord
@@ -188,6 +192,15 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
             raise HTTPException(status_code=404, detail={"code": "run_not_found", "message": "run not found"})
         return RunDetailResponse(item=run_record_view(payload))
 
+    @router.get("/runs", response_model=RunListResponse)
+    def list_runs(limit: int = 20) -> RunListResponse:
+        runtime = runtime_getter()
+        items = runtime.store.list_run_records(limit=max(limit, 0))
+        return RunListResponse(
+            items=run_record_list_view(items),
+            total=len(runtime.store.list_run_records(limit=None)),
+        )
+
     @router.get("/runs/{run_id}/trace", response_model=TraceResponse)
     def get_run_trace(run_id: str) -> TraceResponse:
         runtime = runtime_getter()
@@ -198,6 +211,23 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
         trace = OrchestrationTrace.model_validate(trace_payload)
         run = RunRecord.model_validate(run_payload) if run_payload is not None else None
         return TraceResponse(item=trace_view_from_record(trace, run=run))
+
+    @router.get("/runs/{run_id}/state", response_model=RunStateResponse)
+    def get_run_state(run_id: str) -> RunStateResponse:
+        runtime = runtime_getter()
+        run_payload = runtime.store.get_run_record(run_id)
+        if run_payload is None:
+            raise HTTPException(status_code=404, detail={"code": "run_not_found", "message": "run not found"})
+        state_payload = runtime.store.get_state_snapshot(run_id)
+        if state_payload is None:
+            raise HTTPException(
+                status_code=404,
+                detail={"code": "state_snapshot_not_found", "message": "state snapshot not found"},
+            )
+        return RunStateResponse(
+            run=run_record_view(run_payload),
+            state=historical_control_tower_state(state_payload),
+        )
 
     @router.get("/execution/{execution_id}", response_model=ExecutionDetailResponse)
     def get_execution(execution_id: str) -> ExecutionDetailResponse:

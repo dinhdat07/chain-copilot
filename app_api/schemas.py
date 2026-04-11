@@ -453,6 +453,16 @@ class RunDetailResponse(BaseModel):
     item: RunView
 
 
+class RunListResponse(BaseModel):
+    items: list[RunView]
+    total: int
+
+
+class RunStateResponse(BaseModel):
+    run: RunView
+    state: ControlTowerStateResponse
+
+
 class ExecutionDetailResponse(BaseModel):
     item: ExecutionRecordView
 
