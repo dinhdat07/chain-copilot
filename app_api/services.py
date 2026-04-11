@@ -8,7 +8,7 @@ from fastapi import HTTPException
 
 from core.enums import ApprovalStatus, EventType
 from core.memory import SQLiteStore
-from core.models import Action, DecisionLog, Event, OrchestrationTrace, Plan, SystemState
+from core.models import Action, ConstraintViolation, DecisionLog, Event, OrchestrationTrace, Plan, SystemState
 from core.runtime_records import EventClass, EventEnvelope, ExecutionRecord, ExecutionStatus, RunRecord, RunType
 from core.runtime_tracking import (
     advance_execution_record,
@@ -38,6 +38,7 @@ from app_api.schemas import (
     AlertView,
     AgentStepView,
     CandidateEvaluationView,
+    ConstraintViolationView,
     ControlTowerStateResponse,
     ControlTowerSummaryResponse,
     DecisionLogDetailView,
@@ -481,6 +482,10 @@ def action_view(action: Action) -> ActionView:
     )
 
 
+def constraint_violation_view(item: ConstraintViolation) -> ConstraintViolationView:
+    return ConstraintViolationView(**item.model_dump(mode="json"))
+
+
 def plan_view(plan: Plan | None, decision: DecisionLog | None = None) -> PlanView | None:
     if plan is None:
         return None
@@ -491,6 +496,9 @@ def plan_view(plan: Plan | None, decision: DecisionLog | None = None) -> PlanVie
         status=plan.status.value,
         score=plan.score,
         score_breakdown=plan.score_breakdown,
+        feasible=plan.feasible,
+        violations=[constraint_violation_view(item) for item in plan.violations],
+        mode_rationale=plan.mode_rationale,
         strategy_label=plan.strategy_label,
         generated_by=plan.generated_by,
         approval_required=plan.approval_required,
@@ -529,6 +537,9 @@ def candidate_evaluation_view(item) -> CandidateEvaluationView:
         score=item.score,
         score_breakdown=item.score_breakdown,
         projected_kpis=kpi_view(item.projected_kpis),
+        feasible=item.feasible,
+        violations=[constraint_violation_view(violation) for violation in item.violations],
+        mode_rationale=item.mode_rationale,
         approval_required=item.approval_required,
         approval_reason=item.approval_reason,
         rationale=item.rationale,
@@ -559,6 +570,7 @@ def decision_detail_view(item: DecisionLog) -> DecisionLogDetailView:
         approval_reason=item.approval_reason,
         rationale=item.rationale,
         selection_reason=item.selection_reason,
+        mode_rationale=item.mode_rationale,
         winning_factors=item.winning_factors,
         score_breakdown=item.score_breakdown,
         selected_actions=item.selected_actions,

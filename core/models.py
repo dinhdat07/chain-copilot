@@ -117,12 +117,22 @@ class CandidatePlanDraft(BaseModel):
     llm_used: bool = False
 
 
+class ConstraintViolation(BaseModel):
+    code: str
+    message: str
+    action_id: str | None = None
+    severity: str = "hard"
+
+
 class CandidatePlanEvaluation(BaseModel):
     strategy_label: str
     action_ids: list[str] = Field(default_factory=list)
     score: float
     score_breakdown: dict[str, float]
     projected_kpis: KPIState
+    feasible: bool = True
+    violations: list[ConstraintViolation] = Field(default_factory=list)
+    mode_rationale: str = ""
     approval_required: bool = False
     approval_reason: str = ""
     rationale: str = ""
@@ -136,6 +146,9 @@ class Plan(BaseModel):
     actions: list[Action] = Field(default_factory=list)
     score: float
     score_breakdown: dict[str, float]
+    feasible: bool = True
+    violations: list[ConstraintViolation] = Field(default_factory=list)
+    mode_rationale: str = ""
     strategy_label: str | None = None
     generated_by: str | None = None
     approval_required: bool = False
@@ -155,6 +168,7 @@ class DecisionLog(BaseModel):
     selected_actions: list[str] = Field(default_factory=list)
     rejected_actions: list[dict[str, str]] = Field(default_factory=list)
     score_breakdown: dict[str, float]
+    mode_rationale: str = ""
     rationale: str
     candidate_evaluations: list[CandidatePlanEvaluation] = Field(default_factory=list)
     selection_reason: str = ""

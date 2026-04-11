@@ -105,12 +105,22 @@ class ActionView(BaseModel):
     parameters: dict[str, Any] = Field(default_factory=dict)
 
 
+class ConstraintViolationView(BaseModel):
+    code: str
+    message: str
+    action_id: str | None = None
+    severity: str = "hard"
+
+
 class CandidateEvaluationView(BaseModel):
     strategy_label: str
     action_ids: list[str] = Field(default_factory=list)
     score: float
     score_breakdown: dict[str, float] = Field(default_factory=dict)
     projected_kpis: KPIView
+    feasible: bool = True
+    violations: list[ConstraintViolationView] = Field(default_factory=list)
+    mode_rationale: str = ""
     approval_required: bool
     approval_reason: str
     rationale: str
@@ -124,6 +134,9 @@ class PlanView(BaseModel):
     status: str
     score: float
     score_breakdown: dict[str, float] = Field(default_factory=dict)
+    feasible: bool = True
+    violations: list[ConstraintViolationView] = Field(default_factory=list)
+    mode_rationale: str = ""
     strategy_label: str | None = None
     generated_by: str | None = None
     approval_required: bool = False
@@ -199,6 +212,7 @@ class DecisionLogDetailView(BaseModel):
     approval_reason: str
     rationale: str
     selection_reason: str
+    mode_rationale: str = ""
     winning_factors: list[str] = Field(default_factory=list)
     score_breakdown: dict[str, float] = Field(default_factory=dict)
     selected_actions: list[str] = Field(default_factory=list)
