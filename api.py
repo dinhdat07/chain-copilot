@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uvicorn
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -9,9 +10,6 @@ from app_api.routers import create_router
 from app_api.schemas import ErrorResponse
 from app_api.services import ControlTowerRuntime, make_runtime
 from core.memory import SQLiteStore
-from core.state import load_initial_state
-from orchestrator.graph import build_graph
-from simulation.runner import ScenarioRunner
 
 
 def create_runtime(store: SQLiteStore | None = None) -> ControlTowerRuntime:
@@ -22,7 +20,7 @@ def create_runtime(store: SQLiteStore | None = None) -> ControlTowerRuntime:
 # Global runtime instance
 RUNTIME = create_runtime()
 
-# Legacy globals for backward compatibility
+# Legacy globals for backward compatibility (optional but kept for internal use if needed)
 STORE = RUNTIME.store
 STATE = RUNTIME.state
 GRAPH = RUNTIME.graph
@@ -47,6 +45,10 @@ def replace_runtime(
 ) -> ControlTowerRuntime:
     """Reconfigures the service with fresh components."""
     global RUNTIME
+    from core.state import load_initial_state
+    from orchestrator.graph import build_graph
+    from simulation.runner import ScenarioRunner
+    
     selected_store = store or SQLiteStore()
     RUNTIME = ControlTowerRuntime(
         store=selected_store,
@@ -69,7 +71,7 @@ def create_app(runtime: ControlTowerRuntime | None = None) -> FastAPI:
         )
     instance = FastAPI(title="ChainCopilot API", version="0.2.0")
 
-    # Modular routers - Includes all /api/v1 endpoints
+    # Modular routers - Includes all /api/v1 endpoints (legacy, execution, etc.)
     instance.include_router(create_router(lambda: RUNTIME))
 
     register_error_handlers(instance)
@@ -134,5 +136,8 @@ def register_error_handlers(instance: FastAPI) -> None:
         )
 
 
-sync_legacy_globals()
 app = create_app(RUNTIME)
+
+
+if __name__ == "__main__":
+    uvicorn.run(app, host="0.0.0.0", port=8000)
