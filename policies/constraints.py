@@ -3,13 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from core.enums import ActionType, ConstraintViolationCode, EventType, Mode
-from core.models import (
-    ConstraintViolation as Violation,
-    Event,
-    Plan,
-    SupplierRecord,
-    SystemState,
-)
+from core.models import Event, Plan, SystemState, SupplierRecord, ConstraintViolation as Violation
 
 
 # ---------------------------------------------------------------------------

@@ -18,7 +18,7 @@ from core.models import (
 )
 
 
-DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+DATA_DIR = Path(__file__).resolve().parent.parent.absolute() / "data"
 
 
 def utc_now() -> datetime:
@@ -77,7 +77,8 @@ def recompute_kpis(state: SystemState, recovery_speed: float | None = None) -> K
         for item in state.inventory.values()
     )
     holding_cost = sum(
-        (item.on_hand + item.incoming_qty) * item.unit_cost for item in state.inventory.values()
+        (item.on_hand + item.incoming_qty) * item.unit_cost
+        for item in state.inventory.values()
     )
     route_cost = sum(
         state.routes[item.preferred_route_id].cost
@@ -85,13 +86,19 @@ def recompute_kpis(state: SystemState, recovery_speed: float | None = None) -> K
         if item.preferred_route_id in state.routes
     )
     total_cost = holding_cost + route_cost + state.extra_cost
-    service_level = 1.0 if demand == 0 else max(0.0, min(1.0, 1.0 - (shortage / demand)))
+    service_level = (
+        1.0 if demand == 0 else max(0.0, min(1.0, 1.0 - (shortage / demand)))
+    )
     stockout_risk = 0.0 if demand == 0 else max(0.0, min(1.0, shortage / demand))
     active_risk = [event.severity for event in state.active_events]
-    route_risk = [route.risk_score for route in state.routes.values() if route.status != "blocked"]
+    route_risk = [
+        route.risk_score for route in state.routes.values() if route.status != "blocked"
+    ]
     disruption_risk = 0.0
     if active_risk or route_risk:
-        disruption_risk = sum(active_risk + route_risk[:2]) / max(len(active_risk + route_risk[:2]), 1)
+        disruption_risk = sum(active_risk + route_risk[:2]) / max(
+            len(active_risk + route_risk[:2]), 1
+        )
         disruption_risk = min(disruption_risk, 1.0)
     if recovery_speed is None:
         recovery_speed = 0.85 if state.mode == Mode.NORMAL else 0.55
@@ -101,7 +108,9 @@ def recompute_kpis(state: SystemState, recovery_speed: float | None = None) -> K
         disruption_risk=round(disruption_risk, 4),
         recovery_speed=round(max(0.0, min(1.0, recovery_speed)), 4),
         stockout_risk=round(stockout_risk, 4),
-        decision_latency_ms=state.kpis.decision_latency_ms if getattr(state, "kpis", None) else 0.0,
+        decision_latency_ms=state.kpis.decision_latency_ms
+        if getattr(state, "kpis", None)
+        else 0.0,
     )
 
 
@@ -113,16 +122,14 @@ def load_initial_state(data_dir: Path | None = None) -> SystemState:
     orders_df = _read_csv("orders.csv", data_dir)
 
     inventory = {
-        row["sku"]: InventoryItem(**row.to_dict())
-        for _, row in inventory_df.iterrows()
+        row["sku"]: InventoryItem(**row.to_dict()) for _, row in inventory_df.iterrows()
     }
     suppliers = {
         f"{row['supplier_id']}_{row['sku']}": SupplierRecord(**row.to_dict())
         for _, row in suppliers_df.iterrows()
     }
     routes = {
-        row["route_id"]: RouteRecord(**row.to_dict())
-        for _, row in routes_df.iterrows()
+        row["route_id"]: RouteRecord(**row.to_dict()) for _, row in routes_df.iterrows()
     }
     warehouses = {
         row["warehouse_id"]: WarehouseRecord(**row.to_dict())

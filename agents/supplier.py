@@ -49,8 +49,7 @@ class SupplierAgent(BaseAgent):
                         target_id=sku,
                         parameters={"supplier_id": best.supplier_id},
                         estimated_cost_delta=max(
-                            cost_delta * max(item.forecast_qty, 1),
-                            0.0,
+                            cost_delta * max(item.forecast_qty, 1), 0.0
                         ),
                         estimated_service_delta=0.06
                         if best.reliability >= current_supplier.reliability

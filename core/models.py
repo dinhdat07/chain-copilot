@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from core.enums import ActionType, ApprovalStatus, EventType, Mode, PlanStatus
+from core.enums import ActionType, ApprovalStatus, ConstraintViolationCode, EventType, Mode, PlanStatus
 
 
 class KPIState(BaseModel):
@@ -121,7 +121,7 @@ class CandidatePlanDraft(BaseModel):
 
 
 class ConstraintViolation(BaseModel):
-    code: str
+    code: ConstraintViolationCode
     message: str
     action_id: str | None = None
     severity: str = "hard"
