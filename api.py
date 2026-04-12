@@ -1,143 +1,152 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel, Field
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.encoders import jsonable_encoder
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
-from actions.executor import apply_plan
-from core.enums import ApprovalStatus, EventType, Mode, PlanStatus
+from app_api.routers import create_router
+from app_api.schemas import ErrorResponse
+from app_api.services import ControlTowerRuntime, make_runtime
 from core.memory import SQLiteStore
-from core.models import Event
-from core.state import clone_state, load_initial_state, state_summary, utc_now
+from core.state import load_initial_state
 from orchestrator.graph import build_graph
 from simulation.runner import ScenarioRunner
-from simulation.scenarios import get_scenario_events, list_scenarios
+from execution.dispatch_service import ActionDispatchService
 
 
-class ScenarioRequest(BaseModel):
-    scenario_name: str
-    seed: int = 7
+def create_runtime(store: SQLiteStore | None = None) -> ControlTowerRuntime:
+    """Creates the main engine instance."""
+    return make_runtime(store=store)
 
 
-class ApprovalRequest(BaseModel):
-    approve: bool = True
+# Global runtime instance
+RUNTIME = create_runtime()
+
+# Legacy globals for backward compatibility
+STORE = RUNTIME.store
+STATE = RUNTIME.state
+GRAPH = RUNTIME.graph
+RUNNER = RUNTIME.runner
 
 
-class WhatIfRequest(BaseModel):
-    scenario_name: str
-    seed: int = 7
+def sync_legacy_globals() -> None:
+    """Maintains alignment between the runtime and legacy global variables."""
+    global STORE, STATE, GRAPH, RUNNER
+    STORE = RUNTIME.store
+    STATE = RUNTIME.state
+    GRAPH = RUNTIME.graph
+    RUNNER = RUNTIME.runner
 
 
-class EventRequest(BaseModel):
-    type: EventType
-    severity: float = Field(ge=0.0, le=1.0)
-    source: str = "api"
-    entity_ids: list[str] = Field(default_factory=list)
-    payload: dict = Field(default_factory=dict)
-
-
-STORE = SQLiteStore()
-STATE = load_initial_state()
-GRAPH = build_graph()
-RUNNER = ScenarioRunner(store=STORE)
-
-
-def _current_decision_id() -> str | None:
-    if not STATE.decision_logs:
-        return None
-    return STATE.decision_logs[-1].decision_id
-
-
-app = FastAPI(title="ChainCopilot API", version="0.1.0")
-
-
-@app.get("/api/v1/state")
-def get_state() -> dict:
-    return {"summary": state_summary(STATE), "state": STATE.model_dump(mode="json")}
-
-
-@app.post("/api/v1/events")
-def ingest_event(request: EventRequest) -> dict:
-    global STATE
-    event = Event(
-        event_id=f"evt_api_{request.type.value}_{int(utc_now().timestamp())}",
-        type=request.type,
-        source=request.source,
-        severity=request.severity,
-        entity_ids=request.entity_ids,
-        occurred_at=utc_now(),
-        detected_at=utc_now(),
-        payload=request.payload,
-        dedupe_key=f"{request.type.value}:{request.entity_ids}:{request.payload}",
+def replace_runtime(
+    *,
+    store: SQLiteStore | None = None,
+    state=None,
+    graph=None,
+    runner=None,
+    dispatch_service=None,
+) -> ControlTowerRuntime:
+    """Reconfigures the service with fresh components."""
+    global RUNTIME
+    selected_store = store or SQLiteStore()
+    RUNTIME = ControlTowerRuntime(
+        store=selected_store,
+        state=state or load_initial_state(),
+        graph=graph or build_graph(),
+        runner=runner or ScenarioRunner(store=selected_store),
+        dispatch_service=dispatch_service or ActionDispatchService(),
     )
-    STATE = GRAPH.invoke(STATE, event)
-    STORE.save_state(STATE)
-    if STATE.decision_logs:
-        STORE.save_decision_log(STATE.decision_logs[-1])
+    sync_legacy_globals()
+    return RUNTIME
+
+
+def create_app(runtime: ControlTowerRuntime | None = None) -> FastAPI:
+    """Application factory for the ChainCopilot API."""
+    if runtime is not None:
+        replace_runtime(
+            store=runtime.store,
+            state=runtime.state,
+            graph=runtime.graph,
+            runner=runtime.runner,
+            dispatch_service=runtime.dispatch_service,
+        )
+    instance = FastAPI(title="ChainCopilot API", version="0.2.0")
+    
+    # Configure CORS middleware
+    instance.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Modular routers - Includes all /api/v1 endpoints
+    instance.include_router(create_router(lambda: RUNTIME))
+
+    register_error_handlers(instance)
+    return instance
+
+
+def _error_code_for_status(status_code: int) -> str:
     return {
-        "summary": state_summary(STATE),
-        "latest_plan": STATE.latest_plan.model_dump(mode="json") if STATE.latest_plan else None,
-        "decision_id": _current_decision_id(),
-    }
+        404: "not_found",
+        409: "conflict",
+        422: "validation_error",
+        500: "system_error",
+    }.get(status_code, "request_error")
 
 
-@app.post("/api/v1/scenarios/run")
-def run_scenario(request: ScenarioRequest) -> dict:
-    global STATE
-    if request.scenario_name not in list_scenarios():
-        raise HTTPException(status_code=404, detail="unknown scenario")
-    STATE = RUNNER.run(STATE, request.scenario_name, seed=request.seed)
-    return {
-        "summary": state_summary(STATE),
-        "latest_plan": STATE.latest_plan.model_dump(mode="json") if STATE.latest_plan else None,
-        "scenario_history_count": len(STATE.scenario_history),
-    }
-
-
-@app.post("/api/v1/decisions/{decision_id}/approve")
-def approve_decision(decision_id: str, request: ApprovalRequest) -> dict:
-    global STATE
-    if not STATE.pending_plan or not STATE.decision_logs:
-        raise HTTPException(status_code=404, detail="no pending decision")
-    current_decision = STATE.decision_logs[-1]
-    if current_decision.decision_id != decision_id:
-        raise HTTPException(status_code=404, detail="decision not found")
-
-    if request.approve:
-        STATE.pending_plan.status = PlanStatus.APPROVED
-        STATE = apply_plan(STATE, STATE.pending_plan)
-        if STATE.decision_logs:
-            STATE.decision_logs[-1].approval_status = ApprovalStatus.APPROVED
-        STATE.mode = Mode.CRISIS if STATE.active_events else Mode.NORMAL
+def _error_response(status_code: int, detail) -> JSONResponse:
+    if isinstance(detail, ErrorResponse):
+        payload = detail
+    elif isinstance(detail, dict):
+        payload = ErrorResponse(
+            code=str(detail.get("code") or _error_code_for_status(status_code)),
+            message=str(detail.get("message") or "request failed"),
+            details=detail.get("details", {}),
+            retryable=bool(detail.get("retryable", False)),
+            correlation_id=detail.get("correlation_id"),
+        )
     else:
-        STATE.pending_plan.status = PlanStatus.REJECTED
-        current_decision.approval_status = ApprovalStatus.REJECTED
-        STATE.pending_plan = None
-        if STATE.decision_logs:
-            STATE.decision_logs[-1].approval_status = ApprovalStatus.REJECTED
-        STATE.mode = Mode.NORMAL
-    STORE.save_state(STATE)
-    STORE.save_decision_log(STATE.decision_logs[-1] if STATE.decision_logs else current_decision)
-    return {
-        "decision_id": decision_id,
-        "approved": request.approve,
-        "summary": state_summary(STATE),
-    }
+        payload = ErrorResponse(
+            code=_error_code_for_status(status_code),
+            message=str(detail or "request failed"),
+        )
+    return JSONResponse(status_code=status_code, content=jsonable_encoder(payload))
 
 
-@app.get("/api/v1/decision-logs")
-def decision_logs() -> dict:
-    return {"items": STORE.list_decision_logs()}
+def register_error_handlers(instance: FastAPI) -> None:
+    @instance.exception_handler(HTTPException)
+    async def _http_exception_handler(_: Request, exc: HTTPException) -> JSONResponse:
+        return _error_response(exc.status_code, exc.detail)
+
+    @instance.exception_handler(RequestValidationError)
+    async def _validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+        return _error_response(
+            422,
+            {
+                "code": "validation_error",
+                "message": "request validation failed",
+                "details": {"errors": exc.errors()},
+                "retryable": False,
+            },
+        )
+
+    @instance.exception_handler(Exception)
+    async def _unhandled_exception_handler(_: Request, exc: Exception) -> JSONResponse:
+        return _error_response(
+            500,
+            {
+                "code": "system_error",
+                "message": "internal server error",
+                "details": {"exception_type": exc.__class__.__name__},
+                "retryable": False,
+            },
+        )
 
 
-@app.post("/api/v1/what-if")
-def what_if(request: WhatIfRequest) -> dict:
-    if request.scenario_name not in list_scenarios():
-        raise HTTPException(status_code=404, detail="unknown scenario")
-    simulated = clone_state(STATE)
-    for event in get_scenario_events(request.scenario_name):
-        simulated = GRAPH.invoke(simulated, event)
-    return {
-        "scenario_name": request.scenario_name,
-        "summary": state_summary(simulated),
-        "latest_plan": simulated.latest_plan.model_dump(mode="json") if simulated.latest_plan else None,
-    }
+sync_legacy_globals()
+app = create_app(RUNTIME)

@@ -11,3 +11,22 @@ class BaseAgent(ABC):
     @abstractmethod
     def run(self, state: SystemState, event: Event | None = None) -> AgentProposal:
         raise NotImplementedError
+
+    def enrich_with_llm(
+        self,
+        *,
+        state: SystemState,
+        event: Event | None,
+        proposal: AgentProposal,
+        state_slice: dict,
+    ) -> AgentProposal:
+        from llm.service import enrich_specialist_proposal
+
+        enrich_specialist_proposal(
+            agent_name=self.name,
+            state=state,
+            event=event,
+            proposal=proposal,
+            state_slice=state_slice,
+        )
+        return proposal

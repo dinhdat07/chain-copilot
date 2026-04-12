@@ -37,4 +37,26 @@ class LogisticsAgent(BaseAgent):
                     )
                 )
                 proposal.observations.append(f"{sku} reroute candidate: {best.route_id}")
+        if event is not None or proposal.proposals:
+            route_snapshot = [
+                {
+                    "route_id": route.route_id,
+                    "origin": route.origin,
+                    "destination": route.destination,
+                    "transit_days": route.transit_days,
+                    "cost": route.cost,
+                    "risk_score": route.risk_score,
+                    "status": route.status,
+                }
+                for route in ranked
+            ]
+            self.enrich_with_llm(
+                state=state,
+                event=event,
+                proposal=proposal,
+                state_slice={
+                    "blocked_route": blocked_route,
+                    "route_options": route_snapshot,
+                },
+            )
         return proposal
