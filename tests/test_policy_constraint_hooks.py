@@ -53,13 +53,13 @@ def test_constraints_detect_blocked_route_and_capacity_overflow() -> None:
             Action(
                 action_id="act_reroute_blocked",
                 action_type=ActionType.REROUTE,
-                target_id="SKU_1",
+                target_id="SKU_001",
                 parameters={"route_id": "R1"},
             ),
             Action(
                 action_id="act_reorder_overflow",
                 action_type=ActionType.REORDER,
-                target_id="SKU_1",
+                target_id="SKU_001",
                 parameters={"quantity": 10_000},
             ),
         ],

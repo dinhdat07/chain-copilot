@@ -87,18 +87,18 @@ def test_crisis_mode_can_select_resilience_first(monkeypatch) -> None:
                 "candidate_plans": [
                     {
                         "strategy_label": "cost_first",
-                        "action_ids": ["act_reorder_SKU_3"],
-                        "rationale": "Choose the smallest replenishment move.",
+                        "action_ids": ["act_reorder_SKU_023"],
+                        "rationale": "Choose a smaller replenishment move.",
                     },
                     {
                         "strategy_label": "balanced",
-                        "action_ids": ["act_reorder_SKU_2"],
-                        "rationale": "Restore the most directly affected SKU.",
+                        "action_ids": ["act_reorder_SKU_047", "act_reorder_SKU_049"],
+                        "rationale": "Restore affected SKUs with moderate coverage.",
                     },
                     {
                         "strategy_label": "resilience_first",
-                        "action_ids": ["act_demand_rebalance_SKU_2", "act_reorder_SKU_2"],
-                        "rationale": "Combine repositioning and replenishment for the disrupted SKU.",
+                        "action_ids": ["act_no_op", "act_reroute_SKU_001_R2", "act_reroute_SKU_003_R2"],
+                        "rationale": "Combine the strongest protective moves for the network under stress.",
                     },
                 ]
             }
@@ -115,8 +115,8 @@ def test_crisis_mode_can_select_resilience_first(monkeypatch) -> None:
     event = _event(
         EventType.DEMAND_SPIKE,
         0.7,
-        {"sku": "SKU_2", "multiplier": 2.2},
-        ["SKU_2"],
+        {"sku": "SKU_024", "multiplier": 2.2},
+        ["SKU_024"],
     )
     result = build_graph().invoke(load_initial_state(), event)
 
