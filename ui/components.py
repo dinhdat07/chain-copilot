@@ -1,11 +1,25 @@
+"""Reusable visual components for ChainCopilot dashboard.
+
+Every function here returns rendered Streamlit widgets or HTML.
+Charts use Plotly for professional, interactive visualizations.
+"""
 from __future__ import annotations
 
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import streamlit as st
 
 from core.enums import ActionType, ApprovalStatus, Mode
 from core.models import KPIState, Plan, SystemState
 
+_KPI_THRESHOLDS = {
+    #                  (good,  bad,  higher_is_better)
+    "service_level":   (0.90,  0.75, True),
+    "disruption_risk": (0.25,  0.50, False),
+    "recovery_speed":  (0.70,  0.45, True),
+    "stockout_risk":   (0.20,  0.40, False),
+}
 
 def render_kpis(state: SystemState) -> None:
     cols = st.columns(5)
@@ -206,7 +220,17 @@ def candidate_plan_dataframe(state: SystemState) -> pd.DataFrame:
             for item in decision.candidate_evaluations
         ]
     )
+    _apply_layout(fig, 260)
+    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
+
+# ── KPI comparison charts ─────────────────────────────────────────────────────
+
+def render_kpi_comparison_chart(before: KPIState, after: KPIState) -> None:
+    """Grouped bar chart comparing before/after KPIs (rate metrics only)."""
+    metrics = ["Service Level", "Disruption Risk", "Recovery Speed", "Stockout Risk"]
+    before_vals = [before.service_level, before.disruption_risk, before.recovery_speed, before.stockout_risk]
+    after_vals = [after.service_level, after.disruption_risk, after.recovery_speed, after.stockout_risk]
 
 def latest_reflection_snapshot(state: SystemState) -> dict[str, object] | None:
     notes = state.memory.reflection_notes if state.memory else []
