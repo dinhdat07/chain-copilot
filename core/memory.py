@@ -99,6 +99,14 @@ class SQLiteStore:
             ).fetchall()
         return [json.loads(row[0]) for row in rows]
 
+    def get_decision_log(self, decision_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload FROM decision_logs WHERE decision_id = ?",
+                (decision_id,),
+            ).fetchone()
+        return None if row is None else json.loads(row[0])
+
     def save_scenario_run(self, run: ScenarioRun) -> None:
         payload = json.dumps(run.model_dump(mode="json"), ensure_ascii=True)
         with self._connect() as conn:
