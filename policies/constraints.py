@@ -42,7 +42,10 @@ def _blocked_routes(state: SystemState, event: Event | None) -> set[str]:
         for item in state.active_events
         if item.type in {EventType.ROUTE_BLOCKAGE, EventType.COMPOUND}
     }
-    if event is not None and event.type in {EventType.ROUTE_BLOCKAGE, EventType.COMPOUND}:
+    if event is not None and event.type in {
+        EventType.ROUTE_BLOCKAGE,
+        EventType.COMPOUND,
+    }:
         blocked.add(event.payload.get("route_id"))
     return {item for item in blocked if item}
 
@@ -53,7 +56,10 @@ def _delayed_suppliers(state: SystemState, event: Event | None) -> set[str]:
         for item in state.active_events
         if item.type in {EventType.SUPPLIER_DELAY, EventType.COMPOUND}
     }
-    if event is not None and event.type in {EventType.SUPPLIER_DELAY, EventType.COMPOUND}:
+    if event is not None and event.type in {
+        EventType.SUPPLIER_DELAY,
+        EventType.COMPOUND,
+    }:
         delayed.add(event.payload.get("supplier_id"))
     return {item for item in delayed if item}
 
