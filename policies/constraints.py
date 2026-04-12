@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from core.enums import ActionType, ConstraintViolationCode, EventType, Mode
-from core.models import Event, Plan, SystemState, Violation
+from core.models import Event, Plan, SystemState, ConstraintViolation as Violation
 
 
 # ---------------------------------------------------------------------------
@@ -101,7 +101,6 @@ class BaseRule(ABC):
         """When True, the engine short-circuits on the first violation."""
         return False
 
-    @abstractmethod
     def evaluate(self, plan: Plan, state: SystemState) -> list[Violation]:
         """Return violations found by this rule."""
 
@@ -579,6 +578,8 @@ def evaluate_soft_constraints(
 ) -> list[Violation]:
     """Return soft-constraint warnings for a plan."""
     _, warnings = _SOFT_ENGINE.evaluate(plan, state)
+    for w in warnings:
+        w.severity = "soft"
     return warnings
 
 

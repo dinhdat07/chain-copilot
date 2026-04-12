@@ -41,9 +41,15 @@ from orchestrator.service import (
 )
 from simulation.runner import ScenarioRunner
 from simulation.scenarios import get_scenario_events, list_scenarios
+from execution.dispatch_service import ActionDispatchService
+from execution.models import (
+    ExecutionRecord as ActionExecutionRecord,
+    PlanDispatchSummary,
+)
 
 from app_api.schemas import (
     ActionView,
+    ActionExecutionRecordView,
     ApprovalCommandResultResponse,
     ApprovalDetailView,
     AlertView,
@@ -61,6 +67,7 @@ from app_api.schemas import (
     InventoryRowView,
     KPIView,
     PendingApprovalView,
+    PlanDispatchResponse,
     PlanView,
     ReflectionView,
     RunView,
@@ -115,6 +122,7 @@ class ControlTowerRuntime:
     state: SystemState
     graph: Any
     runner: ScenarioRunner
+    dispatch_service: ActionDispatchService
 
     @classmethod
     def create(cls, store: SQLiteStore | None = None) -> "ControlTowerRuntime":
@@ -124,6 +132,7 @@ class ControlTowerRuntime:
             state=load_initial_state(),
             graph=build_graph(),
             runner=ScenarioRunner(store=local_store),
+            dispatch_service=ActionDispatchService(),
         )
 
     def reinitialize(self, store: SQLiteStore | None = None) -> None:
@@ -131,11 +140,13 @@ class ControlTowerRuntime:
         self.state = load_initial_state()
         self.graph = build_graph()
         self.runner = ScenarioRunner(store=self.store)
+        self.dispatch_service = ActionDispatchService()
 
     def reset(self) -> SystemState:
         self.state = reset_runtime(self.store)
         self.graph = build_graph()
         self.runner = ScenarioRunner(store=self.store)
+        self.dispatch_service = ActionDispatchService()
         return self.state
 
     def current_decision_id(self) -> str | None:
@@ -443,51 +454,50 @@ class ControlTowerRuntime:
         if plan is None:
             raise_not_found("plan", plan_id)
 
-        # Implementation that matches user's and modular requirements
-        execution_id = f"exec_{uuid4().hex[:8]}"
-        now = utc_now()
-        record = ExecutionRecord(
-            execution_id=execution_id,
-            run_id=self.state.run_id,
-            plan_id=plan.plan_id,
-            status=ExecutionStatus.DISPATCHED,
-            dispatch_mode=DispatchMode.PRODUCTION if mode == "commit" else DispatchMode.SIMULATION,
-            dry_run=(mode == "dry_run"),
-            target_system="erp_adapter" if mode == "commit" else "digital_twin",
-            action_ids=[a.action_id for a in plan.actions],
-            created_at=now,
-            updated_at=now,
-        )
-        self.store.save_execution_record(record)
+        summary = self.dispatch_service.dispatch_plan(plan, mode=mode)
         
+        # PERSIST granular records for polling
+        for record in summary.records:
+            self.store.save_action_execution_record(record.execution_id, record.model_dump(mode="json"))
+
+        # Mapping to PlanDispatchResponse format
         return {
-            "plan_id": plan_id,
-            "mode": mode,
-            "records": [execution_record_view(record)],
-            "status": "dispatched"
+            "plan_id": summary.plan_id,
+            "dispatch_mode": summary.dispatch_mode,
+            "plan_execution_status": summary.plan_execution_status.value,
+            "overall_progress": summary.overall_progress,
+            "records": [action_execution_record_view(r) for r in summary.records],
+            "compensation_hints": summary.compensation_hints,
         }
 
-    def update_execution_progress(self, execution_id: str, percentage: float) -> ExecutionRecordView:
-        payload = self.store.get_execution_record(execution_id)
+    def update_execution_progress(self, execution_id: str, percentage: float) -> ActionExecutionRecordView:
+        payload = self.store.get_action_execution_record(execution_id)
         if payload is None:
-            raise_not_found("execution", execution_id)
-        
-        record = ExecutionRecord.model_validate(payload)
-        status = ExecutionStatus.COMPLETED if percentage >= 100.0 else ExecutionStatus.APPLIED
-        
-        updated = advance_execution_record(
-            record,
-            run_id=record.run_id,
-            decision_id=record.decision_id,
-            plan=None,
-            status=status,
-            reason=f"manual progress update: {percentage}%",
-        )
-        self.store.save_execution_record(updated)
-        return execution_record_view(updated)
+            # Fallback for old/missing records
+            record = ActionExecutionRecord(
+                execution_id=execution_id,
+                plan_id="manual",
+                action_id="manual",
+                action_type="REORDER",
+                target_system="ERP",
+                idempotency_key=f"manual_{execution_id}",
+            )
+        else:
+            record = ActionExecutionRecord.model_validate(payload)
 
-    def complete_execution(self, execution_id: str) -> ExecutionRecordView:
+        record.set_progress(percentage)
+        if percentage >= 100.0:
+            record.mark_completed()
+        
+        self.store.save_action_execution_record(record.execution_id, record.model_dump(mode="json"))
+        return action_execution_record_view(record)
+
+    def complete_execution(self, execution_id: str) -> ActionExecutionRecordView:
         return self.update_execution_progress(execution_id, 100.0)
+
+    def list_executions(self, limit: int = 20) -> list[ActionExecutionRecordView]:
+        records = self.store.list_action_execution_records(limit=limit)
+        return [action_execution_record_view(r) for r in records]
 
 
 def make_runtime(store: SQLiteStore | None = None) -> ControlTowerRuntime:
@@ -590,9 +600,12 @@ def run_record_list_view(items: list[RunRecord | dict]) -> list[RunView]:
 
 def execution_record_view(item: ExecutionRecord | dict) -> ExecutionRecordView:
     payload = item if isinstance(item, ExecutionRecord) else ExecutionRecord.model_validate(item)
-    if isinstance(payload, ExecutionRecord):
-        payload = payload
     return ExecutionRecordView(**payload.model_dump(mode="json"))
+
+
+def action_execution_record_view(item: ActionExecutionRecord | dict) -> ActionExecutionRecordView:
+    payload = item if isinstance(item, ActionExecutionRecord) else ActionExecutionRecord.model_validate(item)
+    return ActionExecutionRecordView(**payload.model_dump(mode="json"))
 
 
 def historical_control_tower_state(state_snapshot: SystemState | dict) -> ControlTowerStateResponse:
@@ -651,6 +664,7 @@ def plan_view(plan: Plan | None, decision: DecisionLog | None = None) -> PlanVie
         critic_summary=plan.critic_summary,
         trigger_event_ids=plan.trigger_event_ids,
         actions=[action_view(item) for item in plan.actions],
+        metadata=plan.metadata.model_dump(mode="json") if plan.metadata else {},
     )
 
 

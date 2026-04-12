@@ -408,7 +408,7 @@ class PlannerAgent(BaseAgent):
 
         strategy_rationale = derive_strategy_rationale(effective_event, historical_cases, selected_actions)
         final_plan.metadata = PlanMetadata(
-            referenced_cases=[c.case_id for c in historical_cases],
+            referenced_cases=historical_cases,
             memory_influence_score=memory_influence,
             strategy_rationale=strategy_rationale,
             strategic_prompt=strategic_prompt

@@ -76,6 +76,15 @@ class SQLiteStore:
                 """
             )
 
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS action_execution_records (
+                    execution_id TEXT PRIMARY KEY,
+                    payload TEXT NOT NULL
+                )
+                """
+            )
+
     def save_state(self, state: SystemState) -> None:
         payload = json.dumps(state.model_dump(mode="json"), ensure_ascii=True)
         with self._connect() as conn:
@@ -223,6 +232,31 @@ class SQLiteStore:
             return items
         return items[:limit]
 
+    def save_action_execution_record(self, execution_id: str, payload_dict: dict) -> None:
+        payload = json.dumps(payload_dict, ensure_ascii=True)
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT OR REPLACE INTO action_execution_records(execution_id, payload) VALUES(?, ?)",
+                (execution_id, payload),
+            )
+
+    def get_action_execution_record(self, execution_id: str) -> dict | None:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT payload FROM action_execution_records WHERE execution_id = ?",
+                (execution_id,),
+            ).fetchone()
+        return None if row is None else json.loads(row[0])
+
+    def list_action_execution_records(self, limit: int | None = None) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT payload FROM action_execution_records").fetchall()
+        items = [json.loads(row[0]) for row in rows]
+        items.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+        if limit is None or limit < 0:
+            return items
+        return items[:limit]
+
     def clear_all(self) -> None:
         with self._connect() as conn:
             conn.execute("DELETE FROM decision_logs")
@@ -232,3 +266,4 @@ class SQLiteStore:
             conn.execute("DELETE FROM run_records")
             conn.execute("DELETE FROM traces")
             conn.execute("DELETE FROM execution_records")
+            conn.execute("DELETE FROM action_execution_records")

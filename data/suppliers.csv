@@ -5,3 +5,5 @@ SUP_C,SKU_2,9.5,3,0.82,True,active,100
 SUP_D,SKU_2,10.2,2,0.91,False,blocked,50
 SUP_E,SKU_3,13.0,5,0.76,True,active,100
 SUP_F,SKU_3,13.7,3,0.90,False,blocked,20
+SUP_G_LOW_CAP,SKU_1,15.0,5,0.70,False,active,5
+SUP_H_RISKY,SKU_2,20.0,1,0.60,False,active,200

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from core.models import Action, KPIState, Violation
+from core.models import Action, KPIState, ConstraintViolation as Violation
 
 
 def build_plan_summary(

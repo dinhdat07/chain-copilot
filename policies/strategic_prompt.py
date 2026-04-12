@@ -26,15 +26,27 @@ def retrieve_relevant_cases(
         return []
 
     scored = []
+    # Handle both Enum and string for safety
+    if hasattr(event.type, "value"):
+        event_type_str = str(event.type.value).lower().strip()
+    else:
+        event_type_str = str(event.type).lower().strip()
+    
     for case in memory.historical_cases:
-        type_match = 1.0 if case.event_type == event.type.value else 0.3
+        case_type_str = case.event_type.lower().strip()
+        type_match = 1.0 if case_type_str == event_type_str else 0.3
+        
         severity_diff = abs(case.event_severity - event.severity)
         severity_score = max(0.0, 1.0 - severity_diff)
+        
         similarity = round(0.6 * type_match + 0.4 * severity_score, 4)
         case.similarity_score = similarity
         scored.append(case)
 
-    return sorted(scored, key=lambda c: c.similarity_score, reverse=True)[:top_k]
+    results = sorted(scored, key=lambda c: c.similarity_score, reverse=True)[:top_k]
+    
+    # Return cases that meet a minimum similarity threshold for relevance
+    return [r for r in results if r.similarity_score >= 0.4]
 
 
 def compute_memory_influence(cases: list[HistoricalCase]) -> float:

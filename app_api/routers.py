@@ -5,6 +5,7 @@ from collections.abc import Callable
 from fastapi import APIRouter, HTTPException
 
 from app_api.schemas import (
+    ActionExecutionRecordView,
     ApprovalCommandResultResponse,
     ApprovalDetailResponse,
     ApprovalCommandRequest,
@@ -18,11 +19,13 @@ from app_api.schemas import (
     EventListResponse,
     EventRequest,
     ExecutionDetailResponse,
+    ExecutionListResponse,
     ErrorResponse,
     InventoryListResponse,
     LegacyApprovalRequest,
     PendingApprovalResponse,
     PlanDetailResponse,
+    PlanDispatchResponse,
     ProgressRequest,
     ReflectionListResponse,
     RunDetailResponse,
@@ -255,28 +258,40 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
             state=historical_control_tower_state(state_payload),
         )
 
+    @router.get("/execution", response_model=ExecutionListResponse)
+    def list_executions(limit: int = 50) -> ExecutionListResponse:
+        runtime = runtime_getter()
+        items = runtime.list_executions(limit=limit)
+        return ExecutionListResponse(items=items, total=len(items))
+
     @router.get("/execution/{execution_id}", response_model=ExecutionDetailResponse)
     def get_execution(execution_id: str) -> ExecutionDetailResponse:
         runtime = runtime_getter()
         payload = runtime.store.get_execution_record(execution_id)
-        if payload is None:
-            raise_not_found("execution", execution_id)
-        return ExecutionDetailResponse(item=execution_record_view(payload))
+        if payload is not None:
+            return ExecutionDetailResponse(item=execution_record_view(payload))
+            
+        # Try granular physical action records (prefix exec_)
+        action_payload = runtime.store.get_action_execution_record(execution_id)
+        if action_payload is not None:
+            return ExecutionDetailResponse(item=action_execution_record_view(action_payload))
+            
+        raise_not_found("execution", execution_id)
 
-    @router.post("/execution/{plan_id}/dispatch")
-    def dispatch_plan(plan_id: str, request: DispatchModeRequest) -> dict:
+    @router.post("/execution/{plan_id}/dispatch", response_model=PlanDispatchResponse)
+    def dispatch_plan(plan_id: str, request: DispatchModeRequest) -> PlanDispatchResponse:
         runtime = runtime_getter()
-        return runtime.dispatch_plan(plan_id, request.mode)
+        return PlanDispatchResponse(**runtime.dispatch_plan(plan_id, request.mode))
 
-    @router.post("/execution/{execution_id}/progress", response_model=ExecutionDetailResponse)
-    def update_execution_progress(execution_id: str, request: ProgressRequest) -> ExecutionDetailResponse:
+    @router.post("/execution/{execution_id}/progress", response_model=ActionExecutionRecordView)
+    def update_execution_progress(execution_id: str, request: ProgressRequest) -> ActionExecutionRecordView:
         runtime = runtime_getter()
-        return ExecutionDetailResponse(item=runtime.update_execution_progress(execution_id, request.percentage))
+        return runtime.update_execution_progress(execution_id, request.percentage)
 
-    @router.post("/execution/{execution_id}/complete", response_model=ExecutionDetailResponse)
-    def complete_execution(execution_id: str) -> ExecutionDetailResponse:
+    @router.post("/execution/{execution_id}/complete", response_model=ActionExecutionRecordView)
+    def complete_execution(execution_id: str) -> ActionExecutionRecordView:
         runtime = runtime_getter()
-        return ExecutionDetailResponse(item=runtime.complete_execution(execution_id))
+        return runtime.complete_execution(execution_id)
 
     @router.post("/scenarios/run")
     def run_scenario(request: ScenarioRequest) -> dict:

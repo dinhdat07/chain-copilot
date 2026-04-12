@@ -66,10 +66,6 @@ class WarehouseRecord(BaseModel):
     region: str
 
 
-class Violation(BaseModel):
-    code: ConstraintViolationCode
-    message: str
-
 
 class Event(BaseModel):
     event_id: str
@@ -124,7 +120,7 @@ class CandidatePlanDraft(BaseModel):
 
 
 class ConstraintViolation(BaseModel):
-    code: str
+    code: ConstraintViolationCode
     message: str
     action_id: str | None = None
     severity: str = "hard"
@@ -156,9 +152,10 @@ class HistoricalCase(BaseModel):
 
 
 class PlanMetadata(BaseModel):
-    referenced_cases: list[str] = Field(default_factory=list)
+    referenced_cases: list[HistoricalCase] = Field(default_factory=list)
     memory_influence_score: float = Field(default=0.0, ge=0.0, le=1.0)
     strategy_rationale: str = ""
+    strategic_prompt: str = ""
 
 
 class Plan(BaseModel):
@@ -168,9 +165,6 @@ class Plan(BaseModel):
     actions: list[Action] = Field(default_factory=list)
     score: float
     score_breakdown: dict[str, float]
-    feasible: bool = True
-    violations: list[ConstraintViolation] = Field(default_factory=list)
-    mode_rationale: str = ""
     strategy_label: str | None = None
     generated_by: str | None = None
     approval_required: bool = False
@@ -180,7 +174,7 @@ class Plan(BaseModel):
     critic_summary: str | None = None
     status: PlanStatus = PlanStatus.PROPOSED
     feasible: bool = True
-    violations: list[Violation] = Field(default_factory=list)
+    violations: list[ConstraintViolation] = Field(default_factory=list)
     mode_rationale: str = ""
     metadata: PlanMetadata = Field(default_factory=PlanMetadata)
 
@@ -194,7 +188,6 @@ class DecisionLog(BaseModel):
     selected_actions: list[str] = Field(default_factory=list)
     rejected_actions: list[dict[str, str]] = Field(default_factory=list)
     score_breakdown: dict[str, float]
-    mode_rationale: str = ""
     rationale: str
     candidate_evaluations: list[CandidatePlanEvaluation] = Field(default_factory=list)
     selection_reason: str = ""
@@ -214,7 +207,7 @@ class DecisionLog(BaseModel):
     critic_error: str | None = None
     approval_status: ApprovalStatus = ApprovalStatus.NOT_REQUIRED
     feasible: bool = True
-    violations: list[Violation] = Field(default_factory=list)
+    violations: list[ConstraintViolation] = Field(default_factory=list)
     mode_rationale: str = ""
     metadata: PlanMetadata = Field(default_factory=PlanMetadata)
 
@@ -353,3 +346,6 @@ class SystemState(BaseModel):
             seen.add(event.dedupe_key)
             result.append(event)
         return result
+
+# Alias for backward compatibility after consolidation
+Violation = ConstraintViolation

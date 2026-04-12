@@ -155,6 +155,7 @@ class PlanView(BaseModel):
     critic_summary: str | None = None
     trigger_event_ids: list[str] = Field(default_factory=list)
     actions: list[ActionView] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
 
 
 class PendingApprovalView(BaseModel):
@@ -195,9 +196,9 @@ class ApprovalCommandResultResponse(BaseModel):
     message: str
     latest_plan: PlanView | None = None
     pending_approval: PendingApprovalView | None = None
-    execution: "ExecutionRecordView | None" = None
-    latest_trace: "TraceView | None" = None
-    summary: "ControlTowerSummaryResponse | None" = None
+    execution: ExecutionRecordView | None = None
+    latest_trace: TraceView | None = None
+    summary: ControlTowerSummaryResponse | None = None
 
 
 class DecisionLogSummaryView(BaseModel):
@@ -388,6 +389,34 @@ class ExecutionRecordView(BaseModel):
     updated_at: datetime
 
 
+class ActionExecutionRecordView(BaseModel):
+    execution_id: str
+    plan_id: str
+    action_id: str
+    action_type: str
+    target_system: str
+    payload: dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: str
+    status: str
+    receipt: dict[str, Any] = Field(default_factory=dict)
+    failure_reason: str | None = None
+    is_retryable: bool = False
+    created_at: datetime
+    dispatched_at: datetime | None = None
+    applied_at: datetime | None = None
+    estimated_completion_at: datetime | None = None
+    progress_percentage: float = 0.0
+
+
+class PlanDispatchResponse(BaseModel):
+    plan_id: str
+    dispatch_mode: str
+    plan_execution_status: str
+    overall_progress: float
+    records: list[ActionExecutionRecordView]
+    compensation_hints: list[str] = Field(default_factory=list)
+
+
 class ReflectionView(BaseModel):
     note_id: str
     run_id: str
@@ -494,7 +523,12 @@ class RunStateResponse(BaseModel):
 
 
 class ExecutionDetailResponse(BaseModel):
-    item: ExecutionRecordView
+    item: ExecutionRecordView | ActionExecutionRecordView
+
+
+class ExecutionListResponse(BaseModel):
+    items: list[ActionExecutionRecordView]
+    total: int
 
 
 class ReflectionListResponse(BaseModel):

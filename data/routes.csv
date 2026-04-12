@@ -4,3 +4,4 @@ R2,HCMC,CanTho,1,95.0,0.18,active
 R3,Hanoi,DaNang,3,150.0,0.28,blocked
 R4,Hanoi,Haiphong,1,155.0,0.12,blocked
 R5,HCMC,CanTho,2,80.0,0.25,blocked
+R6_RISK,HCMC,Haiphong,5,300.0,0.85,active
