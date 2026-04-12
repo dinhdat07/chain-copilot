@@ -5,7 +5,14 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from core.enums import ActionType, ApprovalStatus, ConstraintViolationCode, EventType, Mode, PlanStatus
+from core.enums import (
+    ActionType,
+    ApprovalStatus,
+    ConstraintViolationCode,
+    EventType,
+    Mode,
+    PlanStatus,
+)
 
 
 class KPIState(BaseModel):
@@ -15,6 +22,13 @@ class KPIState(BaseModel):
     recovery_speed: float = Field(ge=0.0, le=1.0)
     stockout_risk: float = Field(ge=0.0, le=1.0)
     decision_latency_ms: float = Field(default=0.0, ge=0.0)
+
+
+class DemandRecord(BaseModel):
+    demand_id: str
+    sku: str
+    day_index: int = Field(ge=0)
+    quantity: int = Field(ge=0)
 
 
 class OrderRecord(BaseModel):
@@ -30,13 +44,14 @@ class InventoryItem(BaseModel):
     name: str = "Unknown SKU"
     on_hand: int = Field(ge=0)
     incoming_qty: int = Field(default=0, ge=0)
-    reorder_point: int = Field(ge=0)
-    safety_stock: int = Field(ge=0)
+    reorder_point: int = Field(default=0, ge=0)
+    safety_stock: int = Field(default=0, ge=0)
     unit_cost: float = Field(ge=0.0)
     preferred_supplier_id: str
     preferred_route_id: str
     warehouse_id: str
     forecast_qty: int = Field(default=0, ge=0)
+    std_demand: float = Field(default=0.0, ge=0.0)
 
 
 class SupplierRecord(BaseModel):
@@ -65,7 +80,6 @@ class WarehouseRecord(BaseModel):
     name: str
     capacity: int = Field(ge=0)
     region: str
-
 
 
 class Event(BaseModel):
@@ -213,7 +227,6 @@ class DecisionLog(BaseModel):
     metadata: PlanMetadata = Field(default_factory=PlanMetadata)
 
 
-
 class ReflectionNote(BaseModel):
     note_id: str
     run_id: str
@@ -323,6 +336,7 @@ class SystemState(BaseModel):
     routes: dict[str, RouteRecord] = Field(default_factory=dict)
     warehouses: dict[str, WarehouseRecord] = Field(default_factory=dict)
     orders: list[OrderRecord] = Field(default_factory=list)
+    demands: list[DemandRecord] = Field(default_factory=list)
     kpis: KPIState
     active_events: list[Event] = Field(default_factory=list)
     latest_plan_id: str | None = None
@@ -347,6 +361,7 @@ class SystemState(BaseModel):
             seen.add(event.dedupe_key)
             result.append(event)
         return result
+
 
 # Alias for backward compatibility after consolidation
 Violation = ConstraintViolation
