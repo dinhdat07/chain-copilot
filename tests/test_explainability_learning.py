@@ -33,7 +33,11 @@ def test_decision_log_contains_grounded_explanation() -> None:
 def test_scenario_run_persists_learned_memory_to_state_snapshot(tmp_path: Path) -> None:
     store = SQLiteStore(tmp_path / "chaincopilot.db")
     state = load_initial_state()
-    initial_reliability = state.suppliers["SUP_A"].reliability
+    initial_reliability = next(
+        record.reliability
+        for record in state.suppliers.values()
+        if record.supplier_id == "SUP_A"
+    )
 
     result = ScenarioRunner(store=store).run(state, "supplier_delay")
 
