@@ -15,7 +15,7 @@ from ui.components import (
     plan_actions_dataframe,
     styled_table,
 )
-from ui.styles import section_header, badge
+from ui.styles import section_header
 
 
 SCENARIO_META = {
