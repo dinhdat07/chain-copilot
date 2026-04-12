@@ -89,7 +89,7 @@ def test_daily_plan_endpoint_is_blocked_while_approval_is_pending(tmp_path: Path
     response = client.post("/api/v1/plan/daily")
 
     assert response.status_code == 409
-    assert "pending approval" in response.json()["detail"]
+    assert "pending approval" in response.json()["message"]
 
 
 def test_scenario_endpoint_is_blocked_while_approval_is_pending(tmp_path: Path) -> None:
@@ -101,4 +101,4 @@ def test_scenario_endpoint_is_blocked_while_approval_is_pending(tmp_path: Path) 
     response = client.post("/api/v1/scenarios/run", json={"scenario_name": "route_blockage"})
 
     assert response.status_code == 409
-    assert "pending approval" in response.json()["detail"]
+    assert "pending approval" in response.json()["message"]

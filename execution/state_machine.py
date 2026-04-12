@@ -55,16 +55,17 @@ def compute_plan_execution_status(records: list[ExecutionRecord]) -> PlanExecuti
         return PlanExecutionStatus.PENDING
 
     statuses = {r.status for r in records}
+    finished_success = {ExecutionStatus.APPLIED, ExecutionStatus.COMPLETED}
+    failed_states = {ExecutionStatus.FAILED, ExecutionStatus.ROLLED_BACK}
 
-    if statuses == {ExecutionStatus.COMPLETED}:
+    if statuses and statuses.issubset(finished_success):
         return PlanExecutionStatus.COMPLETED
 
-    if ExecutionStatus.IN_PROGRESS in statuses or ExecutionStatus.APPLIED in statuses:
-        return PlanExecutionStatus.PARTIALLY_APPLIED
-
-    failed = sum(1 for r in records if r.status in {ExecutionStatus.FAILED, ExecutionStatus.ROLLED_BACK})
-    if failed > 0:
+    if statuses & failed_states:
         return PlanExecutionStatus.REQUIRES_MANUAL_INTERVENTION
+
+    if statuses & {ExecutionStatus.IN_PROGRESS, ExecutionStatus.APPLIED, ExecutionStatus.DISPATCHED}:
+        return PlanExecutionStatus.PARTIALLY_APPLIED
 
     return PlanExecutionStatus.PENDING
 

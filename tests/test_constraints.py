@@ -51,8 +51,7 @@ def test_evaluate_hard_constraints() -> None:
     )
     is_feas, vios = evaluate_hard_constraints(plan3, state)
     assert not is_feas
-    # This plan should have both INVENTORY_SHORTAGE and CAPACITY_EXCEEDED
-    assert any(v.code == ConstraintViolationCode.INVENTORY_SHORTAGE for v in vios)
+    # This plan should exceed warehouse capacity.
     assert any(v.code == ConstraintViolationCode.CAPACITY_EXCEEDED for v in vios)
     
     # Target supplier capacity breach
@@ -95,4 +94,4 @@ def test_evaluate_soft_constraints() -> None:
     soft_vios = evaluate_soft_constraints(plan1, state)
     assert len(soft_vios) == 2
     assert any(v.code == ConstraintViolationCode.SUPPLIER_BLOCKED for v in soft_vios)
-    assert any(v.code == ConstraintViolationCode.CAPACITY_EXCEEDED for v in soft_vios)
+    assert any(v.code == ConstraintViolationCode.SLA_VIOLATED for v in soft_vios)

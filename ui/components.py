@@ -11,36 +11,7 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from core.enums import ActionType, ApprovalStatus, Mode
-from core.models import DecisionLog, KPIState, Plan, SystemState
-from ui.styles import badge, section_header
-
-# ── Plotly layout defaults ────────────────────────────────────────────────────
-
-_PLOTLY_LAYOUT = dict(
-    font=dict(family="Plus Jakarta Sans, sans-serif", size=12, color="#A3AED0"),
-    paper_bgcolor="rgba(0,0,0,0)",
-    plot_bgcolor="rgba(0,0,0,0)",
-    margin=dict(l=0, r=0, t=28, b=0),
-    hoverlabel=dict(
-        bgcolor="#2B3674",
-        font_color="#FFFFFF",
-        font_family="Plus Jakarta Sans, sans-serif",
-        font_size=12,
-    ),
-)
-
-_CHART_COLORS = ["#4318FF", "#39B8FF", "#05CD99", "#FFCE20", "#EE5D50", "#E1E9F8"]
-
-
-def _apply_layout(fig: go.Figure, height: int = 280) -> go.Figure:
-    fig.update_layout(**_PLOTLY_LAYOUT, height=height, showlegend=True,
-                      legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1))
-    fig.update_xaxes(gridcolor="#E2E8F0", zerolinecolor="#E2E8F0", tickfont=dict(color="#A3AED0"))
-    fig.update_yaxes(gridcolor="#E2E8F0", zerolinecolor="#E2E8F0", tickfont=dict(color="#A3AED0"))
-    return fig
-
-
-# ── KPI rendering ────────────────────────────────────────────────────────────
+from core.models import KPIState, Plan, SystemState
 
 _KPI_THRESHOLDS = {
     #                  (good,  bad,  higher_is_better)
@@ -50,153 +21,204 @@ _KPI_THRESHOLDS = {
     "stockout_risk":   (0.20,  0.40, False),
 }
 
-def _kpi_color_class(key: str, value: float) -> str:
-    if key not in _KPI_THRESHOLDS:
-        return "blue"
-    good, bad, higher = _KPI_THRESHOLDS[key]
-    if higher:
-        return "green" if value >= good else ("red" if value <= bad else "yellow")
-    else:
-        return "green" if value <= good else ("red" if value >= bad else "yellow")
-
-
-def render_kpi_cards(state: SystemState) -> None:
-    """5 KPI cards with colored top-accent bar."""
-    kpis = state.kpis
-    items = [
-        ("Service Level",   "service_level",   f"{kpis.service_level:.1%}", "speed"),
-        ("Total Cost",      "total_cost",       f"${kpis.total_cost:,.0f}", "attach_money"),
-        ("Disruption Risk", "disruption_risk",  f"{kpis.disruption_risk:.1%}", "warning"),
-        ("Recovery Speed",  "recovery_speed",   f"{kpis.recovery_speed:.1%}", "bolt"),
-        ("Stockout Risk",   "stockout_risk",    f"{kpis.stockout_risk:.1%}", "inventory_2"),
-    ]
+def render_kpis(state: SystemState) -> None:
     cols = st.columns(5)
-    for col, (label, key, formatted, icon) in zip(cols, items):
-        color = _kpi_color_class(key, getattr(kpis, key))
-        col.markdown(
-            f'<div class="kpi-card kpi-{color}">'
-            f'<div class="kpi-icon-wrapper"><span class="material-icons">{icon}</span></div>'
-            f'<div class="kpi-content">'
-            f'<div class="kpi-label">{label}</div>'
-            f'<div class="kpi-value">{formatted}</div>'
-            f'</div></div>',
-            unsafe_allow_html=True,
-        )
+    cols[0].metric("Service Level", f"{state.kpis.service_level:.1%}")
+    cols[1].metric("Total Cost", f"{state.kpis.total_cost:,.0f}")
+    cols[2].metric("Disruption Risk", f"{state.kpis.disruption_risk:.1%}")
+    cols[3].metric("Recovery Speed", f"{state.kpis.recovery_speed:.1%}")
+    cols[4].metric("Stockout Risk", f"{state.kpis.stockout_risk:.1%}")
 
 
-def render_kpi_delta_cards(before: KPIState, after: KPIState) -> None:
-    """5 KPI metric cards with before→after delta values."""
-    items = [
-        ("Service Level",   "service_level",   f"{after.service_level:.1%}",   after.service_level - before.service_level),
-        ("Total Cost",      "total_cost",       f"${after.total_cost:,.0f}",    after.total_cost - before.total_cost),
-        ("Disruption Risk", "disruption_risk",  f"{after.disruption_risk:.1%}", after.disruption_risk - before.disruption_risk),
-        ("Recovery Speed",  "recovery_speed",   f"{after.recovery_speed:.1%}",  after.recovery_speed - before.recovery_speed),
-        ("Stockout Risk",   "stockout_risk",    f"{after.stockout_risk:.1%}",   after.stockout_risk - before.stockout_risk),
-    ]
-    cols = st.columns(5)
-    for col, (label, key, fmt, delta) in zip(cols, items):
-        _, _, higher = _KPI_THRESHOLDS.get(key, (0,0,True))
-        if key == "total_cost":
-            delta_str = f"{delta:+,.0f}"
-            dc = "inverse"
-        else:
-            delta_str = f"{delta:+.3f}"
-            dc = "normal" if (higher and delta >= 0) or (not higher and delta <= 0) else "inverse"
-        col.metric(label, fmt, delta=delta_str, delta_color=dc)
+def inventory_dataframe(state: SystemState) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "sku": item.sku,
+                "on_hand": item.on_hand,
+                "incoming_qty": item.incoming_qty,
+                "forecast_qty": item.forecast_qty,
+                "preferred_supplier_id": item.preferred_supplier_id,
+                "preferred_route_id": item.preferred_route_id,
+            }
+            for item in state.inventory.values()
+        ]
+    )
 
 
-# ── Mode banner ───────────────────────────────────────────────────────────────
+def decision_log_dataframe(state: SystemState) -> pd.DataFrame:
+    return pd.DataFrame(
+        [
+            {
+                "decision_id": log.decision_id,
+                "plan_id": log.plan_id,
+                "approval_status": log.approval_status.value,
+                "service_level_after": log.after_kpis.service_level,
+                "total_cost_after": log.after_kpis.total_cost,
+                "rationale": log.rationale,
+            }
+            for log in reversed(state.decision_logs)
+        ]
+    )
 
-def render_mode_banner(state: SystemState) -> None:
-    modes_map = {
-        Mode.NORMAL: ("normal", "check_circle", "Normal Operations",
-                       "System is running cost-optimized daily planning."),
-        Mode.CRISIS: ("crisis", "bolt", "Crisis Response Active",
-                       "Disruption detected — recovery and resilience prioritized."),
-        Mode.APPROVAL: ("approval", "lock", "Awaiting Approval",
-                         "A high-risk recovery plan requires human approval."),
+
+def mode_summary(state: SystemState) -> dict[str, str]:
+    mapping = {
+        Mode.NORMAL: {"label": "Normal Mode", "tone": "success"},
+        Mode.CRISIS: {"label": "Crisis Mode", "tone": "warning"},
+        Mode.APPROVAL: {"label": "Approval Mode", "tone": "warning"},
     }
-    cls, icon, title, msg = modes_map.get(state.mode, modes_map[Mode.NORMAL])
-    st.markdown(
-        f'<div class="mode-banner {cls}">'
-        f'<span class="material-icons" style="font-size:1.4rem;">{icon}</span>'
-        f'<div><strong>{title}</strong> — {msg}</div></div>',
-        unsafe_allow_html=True,
+    return mapping.get(state.mode, {"label": str(state.mode).title(), "tone": "neutral"})
+
+
+def selected_action_summary(plan: Plan | None) -> dict[str, str] | None:
+    if plan is None or not plan.actions:
+        return None
+    selected = next(
+        (action for action in plan.actions if action.action_type != ActionType.NO_OP),
+        plan.actions[0],
+    )
+    return {
+        "title": f"{selected.action_type.value.replace('_', ' ').title()} {selected.target_id}",
+        "impact": (
+            f"Service {selected.estimated_service_delta:+.0%}, "
+            f"Cost {selected.estimated_cost_delta:+.0f}, "
+            f"Risk {selected.estimated_risk_delta:+.0%}"
+        ),
+        "reason": selected.reason,
+    }
+
+
+def kpi_delta_dataframe(before: KPIState, after: KPIState) -> pd.DataFrame:
+    metrics = [
+        ("service_level", before.service_level, after.service_level),
+        ("total_cost", before.total_cost, after.total_cost),
+        ("disruption_risk", before.disruption_risk, after.disruption_risk),
+        ("recovery_speed", before.recovery_speed, after.recovery_speed),
+        ("stockout_risk", before.stockout_risk, after.stockout_risk),
+    ]
+    return pd.DataFrame(
+        [
+            {"metric": name, "before": old, "after": new, "delta": new - old}
+            for name, old, new in metrics
+        ]
     )
 
 
-# ── Inventory charts ──────────────────────────────────────────────────────────
-
-def render_inventory_bar_chart(state: SystemState) -> None:
-    """Grouped bar chart: On Hand / Incoming / Forecast per SKU."""
-    items = list(state.inventory.values())
-    if not items:
-        st.info("No inventory data available.")
-        return
-
-    df = pd.DataFrame({
-        "SKU": [it.sku for it in items],
-        "On Hand": [it.on_hand for it in items],
-        "Incoming": [it.incoming_qty for it in items],
-        "Forecast Demand": [it.forecast_qty for it in items],
-    })
-    fig = px.bar(
-        df.melt(id_vars="SKU", var_name="Type", value_name="Quantity"),
-        x="SKU", y="Quantity", color="Type", barmode="group",
-        color_discrete_sequence=["#4318FF", "#39B8FF", "#FFB547"],
+def demo_flow_dataframe(state: SystemState) -> pd.DataFrame:
+    trace = state.latest_trace
+    approval_status = (
+        state.decision_logs[-1].approval_status.value
+        if state.decision_logs
+        else ApprovalStatus.NOT_REQUIRED.value
     )
-    _apply_layout(fig, 260)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    rows = [
+        {"step": "1. Daily plan", "status": "complete"},
+        {
+            "step": "2. Disruption detected",
+            "status": "complete" if state.active_events else "not started",
+        },
+        {
+            "step": "3. Autonomous replan",
+            "status": "complete" if state.latest_plan else "not started",
+        },
+        {
+            "step": "4. Approval workflow",
+            "status": (
+                "waiting for approval"
+                if approval_status == ApprovalStatus.PENDING.value
+                else "complete"
+            ),
+        },
+        {
+            "step": "5. Learn from outcomes",
+            "status": "complete" if state.scenario_history else "not started",
+        },
+    ]
+    if trace is not None and trace.execution_status == "rejected":
+        rows[-1]["status"] = "paused"
+    return pd.DataFrame(rows)
 
 
-# ── Supplier charts ───────────────────────────────────────────────────────────
-
-def render_supplier_chart(state: SystemState) -> None:
-    """Horizontal bar chart of supplier reliability with primary indicator."""
-    suppliers = list(state.suppliers.values())
-    if not suppliers:
-        st.info("No supplier data.")
-        return
-
-    df = pd.DataFrame({
-        "Supplier": [s.supplier_id for s in suppliers],
-        "Reliability": [s.reliability for s in suppliers],
-        "Primary": ["★ Primary" if s.is_primary else "Backup" for s in suppliers],
-        "Lead Days": [s.lead_time_days for s in suppliers],
-    })
-    fig = px.bar(
-        df, x="Reliability", y="Supplier", color="Primary", orientation="h",
-        color_discrete_map={"★ Primary": "#4318FF", "Backup": "#A3AED0"},
-        text="Reliability",
+def pipeline_graph_source(state: SystemState) -> str:
+    trace = state.latest_trace
+    terminal = trace.terminal_stage if trace else "execution"
+    final_edge = "decision_engine -> execution"
+    if terminal == "approval":
+        final_edge = "decision_engine -> approval_gate"
+    return "\n".join(
+        [
+            "risk_agent -> demand_agent",
+            "demand_agent -> inventory_agent",
+            "inventory_agent -> supplier_agent",
+            "supplier_agent -> logistics_agent",
+            "logistics_agent -> planner_agent",
+            "planner_agent -> critic_agent",
+            "critic_agent -> decision_engine",
+            final_edge,
+            "approval_gate -> reflection_memory",
+            "execution -> reflection_memory",
+            "Risk Agent",
+            "Planner Agent",
+            "Approval Gate",
+            "Reflection / Memory",
+        ]
     )
-    fig.update_traces(texttemplate="%{text:.0%}", textposition="outside")
-    fig.update_xaxes(range=[0, 1.15], tickformat=".0%")
-    _apply_layout(fig, 240)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
 
 
-# ── Route risk chart ──────────────────────────────────────────────────────────
+def pipeline_node_status_map(state: SystemState) -> dict[str, dict[str, str]]:
+    trace = state.latest_trace
+    statuses: dict[str, dict[str, str]] = {
+        "risk_agent": {"status": "idle", "tone": "normal"},
+        "demand_agent": {"status": "idle", "tone": "normal"},
+        "inventory_agent": {"status": "idle", "tone": "normal"},
+        "supplier_agent": {"status": "idle", "tone": "normal"},
+        "logistics_agent": {"status": "idle", "tone": "normal"},
+        "planner_agent": {"status": "idle", "tone": "normal"},
+        "critic_agent": {"status": "idle", "tone": "normal"},
+        "decision_engine": {"status": "idle", "tone": "normal"},
+        "approval_gate": {"status": "idle", "tone": "normal"},
+        "execution": {"status": "idle", "tone": "normal"},
+        "reflection_memory": {"status": "idle", "tone": "normal"},
+    }
+    if trace is None:
+        return statuses
+    completed_nodes = {
+        step.node_key: step.status
+        for step in trace.steps
+    }
+    for node_key in list(statuses):
+        normalized = node_key.replace("_agent", "")
+        if normalized in completed_nodes:
+            statuses[node_key] = {"status": completed_nodes[normalized], "tone": "complete"}
+    statuses["decision_engine"] = {"status": "completed", "tone": "complete"}
+    if trace.terminal_stage == "approval":
+        statuses["approval_gate"] = {"status": "waiting", "tone": "approval"}
+        statuses["reflection_memory"] = {"status": "recorded", "tone": "approval"}
+    elif trace.execution_status:
+        statuses["execution"] = {"status": trace.execution_status, "tone": "complete"}
+        statuses["reflection_memory"] = {
+            "status": "recorded" if state.memory and state.memory.reflection_notes else "pending",
+            "tone": "complete",
+        }
+    return statuses
 
-def render_route_chart(state: SystemState) -> None:
-    """Scatter chart: transit days vs cost, sized by risk score."""
-    routes = list(state.routes.values())
-    if not routes:
-        st.info("No route data.")
-        return
 
-    df = pd.DataFrame({
-        "Route": [r.route_id for r in routes],
-        "Leg": [f"{r.origin} → {r.destination}" for r in routes],
-        "Transit Days": [r.transit_days for r in routes],
-        "Cost": [r.cost for r in routes],
-        "Risk": [r.risk_score for r in routes],
-        "Status": [r.status for r in routes],
-    })
-    fig = px.scatter(
-        df, x="Transit Days", y="Cost", size="Risk", color="Status",
-        hover_data=["Route", "Leg"],
-        color_discrete_map={"active": "#05CD99", "blocked": "#EE5D50"},
-        size_max=30,
+def candidate_plan_dataframe(state: SystemState) -> pd.DataFrame:
+    if not state.decision_logs:
+        return pd.DataFrame(columns=["strategy", "score", "approval_required", "selected"])
+    decision = state.decision_logs[-1]
+    selected = state.latest_plan.strategy_label if state.latest_plan else None
+    return pd.DataFrame(
+        [
+            {
+                "strategy": item.strategy_label,
+                "score": item.score,
+                "approval_required": item.approval_required,
+                "selected": item.strategy_label == selected,
+            }
+            for item in decision.candidate_evaluations
+        ]
     )
     _apply_layout(fig, 260)
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
@@ -210,178 +232,82 @@ def render_kpi_comparison_chart(before: KPIState, after: KPIState) -> None:
     before_vals = [before.service_level, before.disruption_risk, before.recovery_speed, before.stockout_risk]
     after_vals = [after.service_level, after.disruption_risk, after.recovery_speed, after.stockout_risk]
 
-    fig = go.Figure()
-    fig.add_trace(go.Bar(name="Before", x=metrics, y=before_vals, marker_color="#E2E8F0"))
-    fig.add_trace(go.Bar(name="After",  x=metrics, y=after_vals,  marker_color="#4318FF"))
-    fig.update_layout(barmode="group", yaxis_tickformat=".0%")
-    _apply_layout(fig, 280)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+def latest_reflection_snapshot(state: SystemState) -> dict[str, object] | None:
+    notes = state.memory.reflection_notes if state.memory else []
+    if not notes:
+        return None
+    note = notes[-1]
+    return {
+        "note_id": note.note_id,
+        "summary": note.summary,
+        "pattern_tags": note.pattern_tags,
+        "lessons": note.lessons,
+        "scenario_id": note.scenario_id,
+    }
 
 
-def render_kpi_radar(before: KPIState, after: KPIState) -> None:
-    """Radar/spider chart overlaying before vs after KPIs."""
-    categories = ["Service Level", "Disruption Risk", "Recovery Speed", "Stockout Risk"]
-    before_vals = [before.service_level, before.disruption_risk, before.recovery_speed, before.stockout_risk]
-    after_vals = [after.service_level, after.disruption_risk, after.recovery_speed, after.stockout_risk]
-
-    fig = go.Figure()
-    fig.add_trace(go.Scatterpolar(r=before_vals + [before_vals[0]], theta=categories + [categories[0]],
-                                   name="Before", line=dict(color="#A3AED0"), fill="toself",
-                                   fillcolor="rgba(163,174,208,0.15)"))
-    fig.add_trace(go.Scatterpolar(r=after_vals + [after_vals[0]], theta=categories + [categories[0]],
-                                   name="After", line=dict(color="#4318FF"), fill="toself",
-                                   fillcolor="rgba(67,24,255,0.12)"))
-    fig.update_layout(polar=dict(radialaxis=dict(range=[0, 1], tickformat=".0%")))
-    _apply_layout(fig, 320)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-
-
-# ── Score breakdown ───────────────────────────────────────────────────────────
-
-def render_score_breakdown(log: DecisionLog) -> None:
-    """Donut chart of score breakdown components."""
-    if not log.score_breakdown:
-        return
-    labels = list(log.score_breakdown.keys())
-    values = list(log.score_breakdown.values())
-    fig = go.Figure(go.Pie(
-        labels=labels, values=values, hole=0.55,
-        marker=dict(colors=_CHART_COLORS[:len(labels)]),
-        textinfo="label+percent",
-        textfont=dict(size=11),
-    ))
-    _apply_layout(fig, 260)
-    fig.update_layout(showlegend=False)
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
-
-
-# ── Event pills ───────────────────────────────────────────────────────────────
-
-def render_event_pills(state: SystemState) -> None:
-    if not state.active_events:
-        st.markdown(badge("No active disruptions", "green"), unsafe_allow_html=True)
-        return
-    pills_html = " ".join(
-        badge(f"{e.type.value}  ·  {e.severity:.0%}", "red" if e.severity >= 0.5 else "yellow")
-        for e in state.active_events
+def reflection_timeline_dataframe(state: SystemState) -> pd.DataFrame:
+    notes = state.memory.reflection_notes if state.memory else []
+    return pd.DataFrame(
+        [
+            {
+                "note_id": note.note_id,
+                "scenario_id": note.scenario_id,
+                "approval_status": note.approval_status,
+                "summary": note.summary,
+            }
+            for note in reversed(notes)
+        ]
     )
-    st.markdown(pills_html, unsafe_allow_html=True)
 
 
-# ── Demo stepper ──────────────────────────────────────────────────────────────
-
-def render_demo_stepper(state: SystemState) -> None:
-    latest = state.decision_logs[-1] if state.decision_logs else None
-    steps = [
-        ("Daily Planning", "done" if latest else "idle",
-         "Plan generated." if latest else "Run the daily plan to begin."),
-        ("Disruption Sensing", "done" if state.active_events else "idle",
-         ", ".join(e.type.value for e in state.active_events) if state.active_events else "No disruptions detected."),
-        ("Autonomous Replan", "done" if latest and latest.event_ids else "idle",
-         f"Plan {latest.plan_id}" if latest and latest.event_ids else "Awaiting disruption event."),
-        ("Approval Gate",
-         "waiting" if state.pending_plan else ("done" if latest and latest.approval_required else "idle"),
-         "Pending human approval." if state.pending_plan else "No approval needed."),
-        ("Learning", "done" if state.scenario_history else "idle",
-         f"{len(state.scenario_history)} scenario(s) recorded." if state.scenario_history else "No outcomes recorded."),
+def _planner_input_summary(state: SystemState) -> list[dict[str, str]]:
+    trace = state.latest_trace
+    latest_decision = state.decision_logs[-1] if state.decision_logs else None
+    return [
+        {
+            "field": "Candidate plans",
+            "value": str(len(latest_decision.candidate_evaluations)) if latest_decision else "0",
+        },
+        {
+            "field": "Selected strategy",
+            "value": trace.selected_strategy if trace and trace.selected_strategy else "not selected",
+        },
+        {
+            "field": "Operating mode",
+            "value": state.mode.value,
+        },
     ]
 
-    html = ""
-    for name, status, detail in steps:
-        dot_cls = status  # done | waiting | idle
-        icon = "check" if status == "done" else ("hourglass_empty" if status == "waiting" else "more_horiz")
-        html += (
-            f'<div class="stepper-step">'
-            f'<div class="stepper-dot {dot_cls}"><span class="material-icons" style="font-size:16px;">{icon}</span></div>'
-            f'<div><div class="stepper-name">{name}</div>'
-            f'<div class="stepper-detail">{detail}</div></div>'
-            f'</div>'
-        )
-    st.markdown(html, unsafe_allow_html=True)
 
-
-# ── Dataframe helpers ─────────────────────────────────────────────────────────
-
-def mode_summary(state: SystemState) -> dict:
-    m = {
-        Mode.NORMAL: ("Normal", "success", "Cost-optimized daily operations."),
-        Mode.CRISIS: ("Crisis", "warning", "Disruption detected — recovery mode."),
-        Mode.APPROVAL: ("Pending Approval", "error", "High-risk plan awaiting human decision."),
+def agent_node_payload(state: SystemState, node_key: str) -> dict[str, object]:
+    trace = state.latest_trace
+    if trace is None:
+        return {
+            "title": node_key.replace("_", " ").title(),
+            "summary": "",
+            "reasoning_source": "",
+            "input_summary": pd.DataFrame(columns=["field", "value"]),
+        }
+    step = next((item for item in trace.steps if item.node_key == node_key), None)
+    title_map = {
+        "risk": "Risk Agent",
+        "demand": "Demand Agent",
+        "inventory": "Inventory Agent",
+        "supplier": "Supplier Agent",
+        "logistics": "Logistics Agent",
+        "planner": "Planner Agent",
+        "critic": "Critic Agent",
     }
-    label, tone, msg = m.get(state.mode, m[Mode.NORMAL])
-    return {"label": label, "tone": tone, "message": msg}
-
-
-def selected_action_summary(plan: Plan | None) -> dict | None:
-    if plan is None or not plan.actions:
-        return None
-    action = next((a for a in plan.actions if a.action_type != ActionType.NO_OP), plan.actions[0])
+    input_rows = _planner_input_summary(state) if node_key == "planner" else [
+        {"field": "Mode", "value": step.mode_snapshot if step else state.mode.value},
+        {"field": "Status", "value": step.status if step else "unknown"},
+    ]
     return {
-        "title": f"{action.action_type.value.replace('_',' ').title()} → {action.target_id}",
-        "impact": f"Service: {action.estimated_service_delta:+.2f} · Risk: {action.estimated_risk_delta:+.2f} · Cost: {action.estimated_cost_delta:+.2f}",
-        "detail": action.reason or "—",
+        "title": title_map.get(node_key, node_key.replace("_", " ").title()),
+        "summary": step.summary if step else "",
+        "reasoning_source": step.reasoning_source if step else "",
+        "input_summary": pd.DataFrame(input_rows),
+        "observations": step.observations if step else [],
+        "recommended_action_ids": step.recommended_action_ids if step else [],
     }
-
-
-def plan_actions_dataframe(plan: Plan) -> pd.DataFrame:
-    return pd.DataFrame([
-        {"Action": a.action_type.value, "Target": a.target_id,
-         "Cost Δ": f"{a.estimated_cost_delta:+.1f}", "Risk Δ": f"{a.estimated_risk_delta:+.2f}",
-         "Recovery Hrs": f"{a.estimated_recovery_hours:.0f}", "Reason": a.reason or "—"}
-        for a in plan.actions
-    ])
-
-
-def inventory_dataframe(state: SystemState) -> pd.DataFrame:
-    return pd.DataFrame([
-        {"SKU": it.sku, "On Hand": it.on_hand, "Incoming": it.incoming_qty,
-         "Forecast": it.forecast_qty, "Safety Stock": it.safety_stock,
-         "Supplier": it.preferred_supplier_id, "Route": it.preferred_route_id}
-        for it in state.inventory.values()
-    ])
-
-
-def score_breakdown_dataframe(log: DecisionLog) -> pd.DataFrame:
-    return pd.DataFrame([
-        {"Component": c, "Score": round(v, 4)} for c, v in log.score_breakdown.items()
-    ])
-
-
-def rejected_actions_dataframe(log: DecisionLog) -> pd.DataFrame:
-    return pd.DataFrame(log.rejected_actions) if log.rejected_actions else pd.DataFrame()
-
-
-def memory_tables(state: SystemState) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    mem = state.memory
-    if not mem:
-        return pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
-    sup_df = pd.DataFrame([{"Supplier": k, "Reliability": v} for k,v in mem.supplier_reliability.items()])
-    route_df = pd.DataFrame([{"Route": k, "Disruption Prior": v} for k,v in mem.route_disruption_priors.items()])
-    scen_df = pd.DataFrame([
-        {"Scenario": k, "Runs": d.get("runs",0), "Latest Plan": d.get("latest_plan_id","—"),
-         "Approval": d.get("latest_approval_status","—")}
-        for k,d in mem.scenario_outcomes.items()
-    ])
-    return sup_df, route_df, scen_df
-
-
-def approval_badge(log: DecisionLog | None) -> str:
-    if log is None:
-        return badge("No decisions", "gray")
-    badge_map = {
-        ApprovalStatus.PENDING: ("Pending", "yellow"),
-        ApprovalStatus.APPROVED: ("Approved", "green"),
-        ApprovalStatus.AUTO_APPLIED: ("Auto-applied", "blue"),
-        ApprovalStatus.REJECTED: ("Rejected", "red"),
-        ApprovalStatus.NOT_REQUIRED: ("Not Required", "gray"),
-    }
-    text, variant = badge_map.get(log.approval_status, ("Unknown", "gray"))
-    return badge(text, variant)
-
-def styled_table(df: pd.DataFrame) -> None:
-    if df.empty:
-        st.info("No data available.")
-        return
-    html = df.to_html(classes="custom-table", index=False, border=0, escape=True)
-    wrapped = f'<div class="table-container">{html}</div>'
-    st.markdown(wrapped, unsafe_allow_html=True)
