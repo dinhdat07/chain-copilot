@@ -39,17 +39,17 @@ class ApprovalStatus(str, Enum):
 
 
 class ConstraintViolationCode(str, Enum):
-    SUPPLIER_NOT_FOUND = "SUPPLIER_NOT_FOUND"
-    SUPPLIER_BLOCKED = "SUPPLIER_BLOCKED"
-    SUPPLIER_CAPACITY_EXCEEDED = "SUPPLIER_CAPACITY_EXCEEDED"
-    ROUTE_NOT_FOUND = "ROUTE_NOT_FOUND"
-    ROUTE_BLOCKED = "ROUTE_BLOCKED"
-    CAPACITY_EXCEEDED = "CAPACITY_EXCEEDED"
-    MOQ_NOT_MET = "MOQ_NOT_MET"
-    INVENTORY_SHORTAGE = "INVENTORY_SHORTAGE"
-    SLA_VIOLATED = "SLA_VIOLATED"
-    RISK_HIGH = "RISK_HIGH"
-    RELIABILITY_LOW = "RELIABILITY_LOW"
+    SUPPLIER_NOT_FOUND = "supplier_not_found"
+    SUPPLIER_BLOCKED = "supplier_blocked"
+    SUPPLIER_CAPACITY_EXCEEDED = "supplier_capacity_exceeded"
+    ROUTE_NOT_FOUND = "route_not_found"
+    ROUTE_BLOCKED = "route_blocked"
+    CAPACITY_EXCEEDED = "warehouse_capacity_exceeded"
+    MOQ_NOT_MET = "moq_not_met"
+    INVENTORY_SHORTAGE = "inventory_shortage"
+    SLA_VIOLATED = "sla_violated"
+    RISK_HIGH = "risk_high"
+    RELIABILITY_LOW = "reliability_low"
 
 
 class ExecutionStatus(str, Enum):

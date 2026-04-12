@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import time
 import threading
-from datetime import datetime, timezone
 from typing import Literal
 from uuid import uuid4
 
@@ -56,7 +55,7 @@ def _compensation_hint(record: ExecutionRecord) -> str:
         "reorder":         f"Manually place reorder for {record.payload.get('target_id')} in ERP.",
         "switch_supplier": f"Contact procurement to manually switch supplier for {record.payload.get('target_id')}.",
         "reroute":         f"Maintain current route; escalate TMS alert for {record.payload.get('target_id')}.",
-        "rebalance":       f"Trigger manual warehouse rebalance via WMS portal.",
+        "rebalance":       "Trigger manual warehouse rebalance via WMS portal.",
     }
     return hints.get(record.action_type, "Manual intervention required.")
 

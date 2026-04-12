@@ -3,7 +3,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 
 from core.enums import ActionType, ConstraintViolationCode, EventType, Mode
-from core.models import Event, Plan, SystemState, ConstraintViolation as Violation
+from core.models import Event, Plan, SystemState, SupplierRecord, ConstraintViolation as Violation
 
 
 # ---------------------------------------------------------------------------
@@ -42,10 +42,7 @@ def _blocked_routes(state: SystemState, event: Event | None) -> set[str]:
         for item in state.active_events
         if item.type in {EventType.ROUTE_BLOCKAGE, EventType.COMPOUND}
     }
-    if event is not None and event.type in {
-        EventType.ROUTE_BLOCKAGE,
-        EventType.COMPOUND,
-    }:
+    if event is not None and event.type in {EventType.ROUTE_BLOCKAGE, EventType.COMPOUND}:
         blocked.add(event.payload.get("route_id"))
     return {item for item in blocked if item}
 
@@ -56,10 +53,7 @@ def _delayed_suppliers(state: SystemState, event: Event | None) -> set[str]:
         for item in state.active_events
         if item.type in {EventType.SUPPLIER_DELAY, EventType.COMPOUND}
     }
-    if event is not None and event.type in {
-        EventType.SUPPLIER_DELAY,
-        EventType.COMPOUND,
-    }:
+    if event is not None and event.type in {EventType.SUPPLIER_DELAY, EventType.COMPOUND}:
         delayed.add(event.payload.get("supplier_id"))
     return {item for item in delayed if item}
 
@@ -83,6 +77,24 @@ def _reorder_additions_per_warehouse(plan: Plan, state: SystemState) -> dict[str
         qty = int(action.parameters.get("quantity", 0))
         totals[item.warehouse_id] = totals.get(item.warehouse_id, 0) + qty
     return totals
+
+
+def _supplier_record(
+    state: SystemState,
+    supplier_id: str,
+    sku: str | None = None,
+) -> SupplierRecord | None:
+    if sku is not None:
+        supplier = state.suppliers.get(f"{supplier_id}_{sku}")
+        if supplier is not None:
+            return supplier
+    supplier = state.suppliers.get(supplier_id)
+    if supplier is not None:
+        return supplier
+    for record in state.suppliers.values():
+        if record.supplier_id == supplier_id and (sku is None or record.sku == sku):
+            return record
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -126,7 +138,7 @@ class SupplierExistenceRule(BaseRule):
             if action.action_type != ActionType.SWITCH_SUPPLIER:
                 continue
             supplier_id = action.parameters.get("supplier_id") or action.target_id
-            if supplier_id not in state.suppliers:
+            if _supplier_record(state, supplier_id, action.target_id) is None:
                 violations.append(Violation(
                     code=self.code,
                     message=f"supplier {supplier_id} does not exist",
@@ -145,7 +157,7 @@ class SupplierStatusRule(BaseRule):
             if action.action_type != ActionType.SWITCH_SUPPLIER:
                 continue
             supplier_id = action.parameters.get("supplier_id") or action.target_id
-            supplier = state.suppliers.get(supplier_id)
+            supplier = _supplier_record(state, supplier_id, action.target_id)
             if supplier is None:
                 continue
             if supplier.status != "active":
@@ -167,7 +179,7 @@ class SupplierSkuMatchRule(BaseRule):
             if action.action_type != ActionType.SWITCH_SUPPLIER:
                 continue
             supplier_id = action.parameters.get("supplier_id") or action.target_id
-            supplier = state.suppliers.get(supplier_id)
+            supplier = _supplier_record(state, supplier_id, action.target_id)
             if supplier is None:
                 continue
             if supplier.sku != action.target_id:
@@ -366,7 +378,7 @@ class SupplierCapacityRule(BaseRule):
                 continue
             qty = int(action.parameters.get("quantity", 0)) or item.forecast_qty
             supplier_id = action.parameters.get("supplier_id") or item.preferred_supplier_id
-            supplier = state.suppliers.get(supplier_id)
+            supplier = _supplier_record(state, supplier_id, item.sku)
             if supplier and qty > supplier.capacity:
                 violations.append(Violation(
                     code=self.code,
@@ -424,7 +436,7 @@ class BackupSupplierRule(BaseRule):
             if action.action_type != ActionType.SWITCH_SUPPLIER:
                 continue
             supplier_id = action.parameters.get("supplier_id") or action.target_id
-            supplier = state.suppliers.get(supplier_id)
+            supplier = _supplier_record(state, supplier_id, action.target_id)
             if supplier and not supplier.is_primary:
                 warnings.append(Violation(
                     code=self.code,
@@ -463,7 +475,7 @@ class LowReliabilityRule(BaseRule):
             supplier_id = action.parameters.get("supplier_id")
             if not supplier_id:
                 continue
-            supplier = state.suppliers.get(supplier_id)
+            supplier = _supplier_record(state, supplier_id, action.target_id)
             if supplier and supplier.reliability < 0.85:
                 warnings.append(Violation(
                     code=self.code,
@@ -600,7 +612,6 @@ def evaluate_plan_constraints(
     Wraps the rule engine so callers that pass a raw action list still work
     without creating a full Plan object.
     """
-    from core.enums import Mode
     from core.models import Plan as _Plan
 
     dummy = _Plan(

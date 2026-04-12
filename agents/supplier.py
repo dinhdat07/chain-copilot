@@ -24,6 +24,8 @@ class SupplierAgent(BaseAgent):
         for sku, item in state.inventory.items():
             current = item.preferred_supplier_id
             current_supplier = state.suppliers.get(f"{current}_{sku}")
+            if current_supplier is None:
+                current_supplier = state.suppliers.get(current)
             ranked = sorted(
                 by_sku.get(sku, []),
                 key=lambda supplier: (
