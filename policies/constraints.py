@@ -32,7 +32,10 @@ def _blocked_routes(state: SystemState, event: Event | None) -> set[str]:
         for item in state.active_events
         if item.type in {EventType.ROUTE_BLOCKAGE, EventType.COMPOUND}
     }
-    if event is not None and event.type in {EventType.ROUTE_BLOCKAGE, EventType.COMPOUND}:
+    if event is not None and event.type in {
+        EventType.ROUTE_BLOCKAGE,
+        EventType.COMPOUND,
+    }:
         blocked.add(event.payload.get("route_id"))
     return {item for item in blocked if item}
 
@@ -43,7 +46,10 @@ def _delayed_suppliers(state: SystemState, event: Event | None) -> set[str]:
         for item in state.active_events
         if item.type in {EventType.SUPPLIER_DELAY, EventType.COMPOUND}
     }
-    if event is not None and event.type in {EventType.SUPPLIER_DELAY, EventType.COMPOUND}:
+    if event is not None and event.type in {
+        EventType.SUPPLIER_DELAY,
+        EventType.COMPOUND,
+    }:
         delayed.add(event.payload.get("supplier_id"))
     return {item for item in delayed if item}
 
@@ -63,7 +69,7 @@ def evaluate_plan_constraints(
             continue
         if action.action_type == ActionType.SWITCH_SUPPLIER:
             supplier_id = str(action.parameters.get("supplier_id", ""))
-            supplier = state.suppliers.get(supplier_id)
+            supplier = state.suppliers.get(f"{supplier_id}_{action.target_id}")
             target_item = state.inventory.get(action.target_id)
             if supplier is None:
                 violations.append(

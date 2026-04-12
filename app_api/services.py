@@ -800,7 +800,9 @@ def inventory_rows(
 
 
 def _supplier_tradeoff(state: SystemState, supplier_id: str, sku: str) -> str:
-    current = state.suppliers[supplier_id]
+    current = state.suppliers.get(f"{supplier_id}_{sku}")
+    if not current:
+        return "unknown"
     peers = [item for item in state.suppliers.values() if item.sku == sku]
     if not peers:
         return "no comparison available"
