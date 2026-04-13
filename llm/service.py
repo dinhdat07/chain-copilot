@@ -4,6 +4,7 @@ import json
 import re
 from typing import Any
 
+from core.logger import get_logger
 from core.models import (
     Action,
     AgentProposal,
@@ -18,6 +19,7 @@ from core.models import (
 )
 from llm.config import load_settings
 from llm.gemini_client import GeminiClient, GeminiClientError
+from llm.vertex_client import VertexClientError, VertexGeminiClient
 from orchestrator.prompts import (
     DECISION_EXPLANATION_PROMPT,
     AI_CANDIDATE_PLANNER_PROMPT,
@@ -29,6 +31,16 @@ from orchestrator.prompts import (
     SPECIALIST_AGENT_PROMPT,
     SPECIALIST_REASONING_PROMPT,
 )
+
+logger = get_logger(__name__)
+
+
+def _provider_client(settings):
+    if settings.provider == "gemini":
+        return GeminiClient(settings)
+    if settings.provider == "vertex":
+        return VertexGeminiClient(settings)
+    return None
 
 
 ENRICHMENT_SCHEMA = {
@@ -144,29 +156,58 @@ def _call_json_model(
     prompt: str,
     schema: dict,
     capability: str = "general",
-    model_override: str | None = None,
 ) -> tuple[dict | None, str | None, str | None]:
     settings = load_settings()
     if not settings.enabled:
-        return None, None, None
+        logger.info("llm capability=%s skipped: llm disabled", capability)
+        return None, None, "llm_disabled" if capability == "planner" else None
     if capability == "planner" and settings.planner_mode == "deterministic":
+        logger.info("llm capability=%s skipped: planner mode is deterministic", capability)
         return None, settings.provider, "planner_mode=deterministic"
-    if settings.provider != "gemini":
+    client = _provider_client(settings)
+    if client is None:
+        logger.warning(
+            "llm capability=%s skipped: unsupported provider=%s",
+            capability,
+            settings.provider,
+        )
         return None, settings.provider, f"unsupported provider: {settings.provider}"
     last_error: str | None = None
-    client = GeminiClient(settings)
     for attempt in range(1, settings.retry_attempts + 1):
+        logger.info(
+            "llm capability=%s call start provider=%s model=%s attempt=%s/%s",
+            capability,
+            settings.provider,
+            settings.model,
+            attempt,
+            settings.retry_attempts,
+        )
         try:
             response = client.generate_json(
                 prompt=prompt,
                 schema=schema,
                 model_override=model_override,
             )
-        except GeminiClientError as exc:
+        except (GeminiClientError, VertexClientError) as exc:
             last_error = str(exc)
+            logger.warning(
+                "llm capability=%s call failed attempt=%s/%s error=%s",
+                capability,
+                attempt,
+                settings.retry_attempts,
+                last_error,
+            )
             if attempt >= settings.retry_attempts:
                 break
             continue
+        logger.info(
+            "llm capability=%s call succeeded provider=%s model=%s attempt=%s/%s",
+            capability,
+            settings.provider,
+            settings.model,
+            attempt,
+            settings.retry_attempts,
+        )
         return response, settings.provider, None
     return None, settings.provider, last_error
 
@@ -229,10 +270,7 @@ def _normalize_strategy_label(raw_value: str, rationale: str = "") -> str:
         return "cost_first"
     if "balance" in rationale_normalized:
         return "balanced"
-    if any(
-        token in rationale_normalized
-        for token in {"resilien", "recover", "service", "stockout"}
-    ):
+    if any(token in rationale_normalized for token in {"resilien", "recover", "service", "stockout"}):
         return "resilience_first"
     return raw_value.strip().lower()
 
@@ -301,7 +339,6 @@ def _build_specialist_prompt(
     event: Event | None,
     proposal: AgentProposal,
     state_slice: dict[str, Any],
-    custom_prompt: str | None = None,
 ) -> str:
     context = {
         "agent": agent_name,
@@ -314,16 +351,9 @@ def _build_specialist_prompt(
         "current_risks": proposal.risks,
         "candidate_actions": _action_catalog(proposal.proposals),
     }
-
-    agent_instruction = (
-        custom_prompt.format(agent_name=agent_name)
-        if custom_prompt
-        else SPECIALIST_AGENT_PROMPT.format(agent_name=agent_name)
-    )
-
     instructions = "\n\n".join(
         [
-            agent_instruction,
+            SPECIALIST_AGENT_PROMPT.format(agent_name=agent_name),
             SPECIALIST_REASONING_PROMPT.strip(),
             (
                 "Return JSON with keys domain_summary, downstream_impacts, "
@@ -404,9 +434,7 @@ def _build_critic_prompt(
             "score_breakdown": selected_plan.score_breakdown,
             "action_ids": [action.action_id for action in selected_plan.actions],
         },
-        "candidate_evaluations": [
-            evaluation.model_dump(mode="json") for evaluation in evaluations
-        ],
+        "candidate_evaluations": [evaluation.model_dump(mode="json") for evaluation in evaluations],
     }
     instructions = "\n\n".join(
         [
@@ -427,12 +455,8 @@ def _build_reflection_prompt(
         "scenario_run": run.model_dump(mode="json"),
         "active_events": [_event_context(item) for item in state.active_events],
         "current_kpis": state.kpis.model_dump(mode="json"),
-        "latest_plan": state.latest_plan.model_dump(mode="json")
-        if state.latest_plan
-        else None,
-        "latest_decision": decision_log.model_dump(mode="json")
-        if decision_log
-        else None,
+        "latest_plan": state.latest_plan.model_dump(mode="json") if state.latest_plan else None,
+        "latest_decision": decision_log.model_dump(mode="json") if decision_log else None,
     }
     instructions = "\n\n".join(
         [
@@ -456,26 +480,18 @@ def _unique_action_ids(action_ids: list[str], allowed_ids: set[str]) -> list[str
     return unique
 
 
-def _apply_ranked_actions(
-    proposal: AgentProposal, ranked_action_ids: list[str]
-) -> None:
+def _apply_ranked_actions(proposal: AgentProposal, ranked_action_ids: list[str]) -> None:
     if not ranked_action_ids:
         return
     by_id = {action.action_id: action for action in proposal.proposals}
-    ranked_actions = [
-        by_id[action_id] for action_id in ranked_action_ids if action_id in by_id
-    ]
+    ranked_actions = [by_id[action_id] for action_id in ranked_action_ids if action_id in by_id]
     if not ranked_actions:
         return
     current_max = max((action.priority for action in proposal.proposals), default=0.0)
     top_priority = min(1.0, current_max + 0.1)
     for index, action in enumerate(ranked_actions):
         action.priority = round(max(0.0, top_priority - (index * 0.03)), 4)
-    unranked_actions = [
-        action
-        for action in proposal.proposals
-        if action.action_id not in ranked_action_ids
-    ]
+    unranked_actions = [action for action in proposal.proposals if action.action_id not in ranked_action_ids]
     proposal.proposals = ranked_actions + unranked_actions
 
 
@@ -486,7 +502,6 @@ def enrich_specialist_proposal(
     event: Event | None,
     proposal: AgentProposal,
     state_slice: dict[str, Any],
-    custom_prompt: str | None = None,
 ) -> None:
     prompt = _build_specialist_prompt(
         agent_name=agent_name,
@@ -494,17 +509,11 @@ def enrich_specialist_proposal(
         event=event,
         proposal=proposal,
         state_slice=state_slice,
-        custom_prompt=custom_prompt,
     )
-
-    settings = load_settings()
-    model_override = settings.agent_models.get(agent_name)
-
     response, provider, error = _call_json_model(
         prompt=prompt,
         schema=SPECIALIST_SCHEMA,
         capability="specialist",
-        model_override=model_override,
     )
     proposal.llm_used = False
     proposal.llm_error = error
@@ -518,7 +527,9 @@ def enrich_specialist_proposal(
         if str(item).strip()
     ]
     proposal.tradeoffs = [
-        str(item).strip() for item in response.get("tradeoffs", []) if str(item).strip()
+        str(item).strip()
+        for item in response.get("tradeoffs", [])
+        if str(item).strip()
     ]
     notes_for_planner = str(response.get("notes_for_planner", "")).strip()
     if notes_for_planner:
@@ -526,11 +537,7 @@ def enrich_specialist_proposal(
 
     allowed_ids = {action.action_id for action in proposal.proposals}
     ranked_action_ids = _unique_action_ids(
-        [
-            str(item).strip()
-            for item in response.get("recommended_action_ids", [])
-            if str(item).strip()
-        ],
+        [str(item).strip() for item in response.get("recommended_action_ids", []) if str(item).strip()],
         allowed_ids,
     )
     if response.get("recommended_action_ids") and not ranked_action_ids and allowed_ids:
@@ -549,9 +556,7 @@ def enrich_specialist_proposal(
         ]
     )
     if not proposal.llm_used and provider:
-        proposal.llm_error = (
-            proposal.llm_error or f"{provider} returned an empty specialist response"
-        )
+        proposal.llm_error = proposal.llm_error or f"{provider} returned an empty specialist response"
 
 
 def generate_candidate_plan_drafts(
@@ -565,17 +570,13 @@ def generate_candidate_plan_drafts(
         event=event,
         candidate_actions=candidate_actions,
     )
-
-    settings = load_settings()
-    model_override = settings.agent_models.get("planner")
-
     response, _, error = _call_json_model(
         prompt=prompt,
         schema=PLANNER_CANDIDATES_SCHEMA,
         capability="planner",
-        model_override=model_override,
     )
     if response is None:
+        logger.info("planner llm path not used: %s", error or "unknown_reason")
         return [], error
 
     allowed_ids = {action.action_id for action in candidate_actions}
@@ -583,16 +584,11 @@ def generate_candidate_plan_drafts(
     drafts: list[CandidatePlanDraft] = []
     for item in response.get("candidate_plans", []):
         rationale = str(item.get("rationale", "")).strip()
-        strategy_label = _normalize_strategy_label(
-            str(item.get("strategy_label", "")).strip(), rationale
-        )
+        strategy_label = _normalize_strategy_label(str(item.get("strategy_label", "")).strip(), rationale)
         extracted_refs = _extract_candidate_action_refs(item)
         action_ids = _unique_action_ids(
             [
-                alias_map.get(
-                    candidate_ref,
-                    alias_map.get(_normalize_text(candidate_ref), candidate_ref),
-                )
+                alias_map.get(candidate_ref, alias_map.get(_normalize_text(candidate_ref), candidate_ref))
                 for candidate_ref in extracted_refs
                 if candidate_ref.strip()
             ],
@@ -606,6 +602,11 @@ def generate_candidate_plan_drafts(
                 llm_used=True,
             )
         )
+    logger.info(
+        "planner llm returned candidate_plans=%s normalized_drafts=%s",
+        len(response.get("candidate_plans", [])),
+        len(drafts),
+    )
     return drafts, None
 
 
@@ -622,22 +623,15 @@ def critique_candidate_plans(
         selected_plan=selected_plan,
         evaluations=evaluations,
     )
-
-    settings = load_settings()
-    model_override = settings.agent_models.get("critic")
-
     response, _, error = _call_json_model(
         prompt=prompt,
         schema=CRITIC_SCHEMA,
         capability="critic",
-        model_override=model_override,
     )
     if response is None:
         return None, [], False, error
     summary = str(response.get("summary", "")).strip() or None
-    findings = [
-        str(item).strip() for item in response.get("findings", []) if str(item).strip()
-    ]
+    findings = [str(item).strip() for item in response.get("findings", []) if str(item).strip()]
     used = bool(summary or findings)
     return summary, findings, used, None
 
@@ -669,20 +663,10 @@ def generate_reflection_note(
         mode=state.mode.value,
         approval_status=run.approval_status or "unknown",
         summary=str(response.get("summary", "")).strip(),
-        lessons=[
-            str(item).strip()
-            for item in response.get("lessons", [])
-            if str(item).strip()
-        ],
-        pattern_tags=[
-            str(item).strip()
-            for item in response.get("pattern_tags", [])
-            if str(item).strip()
-        ],
+        lessons=[str(item).strip() for item in response.get("lessons", []) if str(item).strip()],
+        pattern_tags=[str(item).strip() for item in response.get("pattern_tags", []) if str(item).strip()],
         follow_up_checks=[
-            str(item).strip()
-            for item in response.get("follow_up_checks", [])
-            if str(item).strip()
+            str(item).strip() for item in response.get("follow_up_checks", []) if str(item).strip()
         ],
         llm_used=True,
         llm_error=None,
@@ -763,11 +747,9 @@ def enrich_plan_and_decision(
         return
 
     decision_log.llm_provider = settings.provider
-
-    model_override = settings.agent_models.get("planner")
-    decision_log.llm_model = model_override if model_override else settings.model
-
-    if settings.provider != "gemini":
+    decision_log.llm_model = settings.model
+    client = _provider_client(settings)
+    if client is None:
         decision_log.llm_used = False
         decision_log.llm_error = f"unsupported provider: {settings.provider}"
         return
@@ -776,16 +758,32 @@ def enrich_plan_and_decision(
         state=state, event=event, plan=plan, decision_log=decision_log
     )
     try:
-        response = GeminiClient(settings).generate_json(
+        logger.info(
+            "llm capability=enrichment call start provider=%s model=%s",
+            settings.provider,
+            settings.model,
+        )
+        response = client.generate_json(
             prompt=prompt,
             schema=ENRICHMENT_SCHEMA,
             model_override=model_override,
         )
-    except GeminiClientError as exc:
+    except (GeminiClientError, VertexClientError) as exc:
+        logger.warning(
+            "llm capability=enrichment call failed provider=%s model=%s error=%s",
+            settings.provider,
+            settings.model,
+            exc,
+        )
         decision_log.llm_used = False
         decision_log.llm_error = str(exc)
         plan.llm_planner_narrative = None
         return
+    logger.info(
+        "llm capability=enrichment call succeeded provider=%s model=%s",
+        settings.provider,
+        settings.model,
+    )
 
     planner_narrative = str(response.get("planner_narrative", "")).strip()
     operator_explanation = str(response.get("operator_explanation", "")).strip()
@@ -794,8 +792,5 @@ def enrich_plan_and_decision(
     plan.llm_planner_narrative = planner_narrative or None
     decision_log.llm_operator_explanation = operator_explanation or None
     decision_log.llm_approval_summary = approval_summary or None
-    decision_log.llm_used = any(
-        [planner_narrative, operator_explanation, approval_summary]
-    )
+    decision_log.llm_used = any([planner_narrative, operator_explanation, approval_summary])
     decision_log.llm_error = None
-

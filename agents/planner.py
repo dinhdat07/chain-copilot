@@ -16,6 +16,7 @@ from core.models import (
     SystemState,
     PlanMetadata
 )
+from core.logger import get_logger
 from llm.service import enrich_plan_and_decision, generate_candidate_plan_drafts
 from policies.explainability import (
     build_plan_summary,
@@ -31,6 +32,8 @@ from policies.strategic_prompt import (
     derive_strategy_rationale,
     build_strategic_prompt,
 )
+
+logger = get_logger(__name__)
 
 
 STRATEGY_ORDER = ("cost_first", "balanced", "resilience_first")
@@ -346,11 +349,26 @@ class PlannerAgent(BaseAgent):
         llm_drafts, planner_error = generate_candidate_plan_drafts(
             state=state, event=event, candidate_actions=feasible_candidates
         )
+        logger.info(
+            "planner candidate generation result llm_drafts=%s planner_error=%s feasible_candidates=%s",
+            len(llm_drafts),
+            planner_error or "none",
+            len(feasible_candidates),
+        )
         
         drafts, repaired_count = _normalize_drafts(llm_drafts, feasible_candidates, action_limit)
         fallback_used = repaired_count > 0
         if fallback_used and not planner_error:
             planner_error = "planner returned incomplete or invalid candidate plans"
+        if fallback_used:
+            logger.warning(
+                "planner fallback activated repaired_count=%s total_strategies=%s reason=%s",
+                repaired_count,
+                len(STRATEGY_ORDER),
+                planner_error or "unknown_reason",
+            )
+        else:
+            logger.info("planner used llm candidate drafts without repair")
 
         by_id = {action.action_id: action for action in feasible_candidates}
         evaluations: list[CandidatePlanEvaluation] = []
@@ -452,5 +470,12 @@ class PlannerAgent(BaseAgent):
         proposal.notes_for_planner = decision_log.selection_reason
         proposal.llm_used = any(evaluation.llm_used for evaluation in evaluations)
         proposal.llm_error = planner_error if fallback_used else None
+        logger.info(
+            "planner final selection strategy=%s generated_by=%s llm_used=%s llm_error=%s",
+            final_plan.strategy_label,
+            final_plan.generated_by,
+            proposal.llm_used,
+            proposal.llm_error or "none",
+        )
         
         return proposal
