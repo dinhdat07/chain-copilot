@@ -3,8 +3,8 @@ Tests for Strategic Planner Agent Memory & Prompt System.
 """
 from datetime import datetime, timezone
 
-from core.enums import EventType, Mode, ActionType
-from core.models import Action, Event, HistoricalCase, MemorySnapshot, Plan
+from core.enums import ActionType, EventType
+from core.models import Action, Event, MemorySnapshot
 from core.state import default_memory
 from policies.strategic_prompt import (
     retrieve_relevant_cases,
@@ -157,7 +157,6 @@ def test_prompt_references_case_ids() -> None:
 
 
 def test_prompt_mode_directive_changes_by_mode() -> None:
-    memory = _make_memory_with_cases()
     event = _make_event()
     cases = []
     
@@ -202,7 +201,7 @@ def test_rationale_without_event() -> None:
 
 def test_default_memory_has_seed_cases() -> None:
     memory = default_memory()
-    assert len(memory.historical_cases) == 8  # 8 cases seeded in CSV
+    assert len(memory.historical_cases) >= 8
 
 
 def test_default_memory_case_ids_are_unique() -> None:

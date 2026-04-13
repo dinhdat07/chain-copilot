@@ -31,6 +31,97 @@ def _read_csv(name: str, data_dir: Path | None = None) -> pd.DataFrame:
     return pd.read_csv(base / name)
 
 
+def _validate_seed_data(
+    *,
+    inventory_df: pd.DataFrame,
+    suppliers_df: pd.DataFrame,
+    routes_df: pd.DataFrame,
+    warehouses_df: pd.DataFrame,
+    orders_df: pd.DataFrame,
+) -> None:
+    inventory_skus = set(inventory_df["sku"].astype(str))
+    supplier_skus = set(suppliers_df["sku"].astype(str))
+    route_ids = set(routes_df["route_id"].astype(str))
+    warehouse_ids = set(warehouses_df["warehouse_id"].astype(str))
+    supplier_pairs = {
+        (str(row["supplier_id"]), str(row["sku"]))
+        for _, row in suppliers_df.iterrows()
+    }
+
+    errors: list[str] = []
+
+    missing_inventory_routes = sorted(
+        {
+            str(row["preferred_route_id"])
+            for _, row in inventory_df.iterrows()
+            if str(row["preferred_route_id"]) not in route_ids
+        }
+    )
+    if missing_inventory_routes:
+        errors.append(
+            f"inventory references unknown routes: {', '.join(missing_inventory_routes)}"
+        )
+
+    missing_inventory_warehouses = sorted(
+        {
+            str(row["warehouse_id"])
+            for _, row in inventory_df.iterrows()
+            if str(row["warehouse_id"]) not in warehouse_ids
+        }
+    )
+    if missing_inventory_warehouses:
+        errors.append(
+            "inventory references unknown warehouses: "
+            + ", ".join(missing_inventory_warehouses)
+        )
+
+    missing_preferred_suppliers = sorted(
+        {
+            f"{row['preferred_supplier_id']}:{row['sku']}"
+            for _, row in inventory_df.iterrows()
+            if (str(row["preferred_supplier_id"]), str(row["sku"])) not in supplier_pairs
+        }
+    )
+    if missing_preferred_suppliers:
+        errors.append(
+            "inventory preferred suppliers missing from suppliers.csv: "
+            + ", ".join(missing_preferred_suppliers)
+        )
+
+    missing_supplier_inventory = sorted(supplier_skus - inventory_skus)
+    if missing_supplier_inventory:
+        errors.append(
+            "suppliers reference unknown SKUs: " + ", ".join(missing_supplier_inventory)
+        )
+
+    missing_order_inventory = sorted(
+        {
+            str(row["sku"])
+            for _, row in orders_df.iterrows()
+            if str(row["sku"]) not in inventory_skus
+        }
+    )
+    if missing_order_inventory:
+        errors.append(
+            "orders reference unknown SKUs: " + ", ".join(missing_order_inventory)
+        )
+
+    missing_order_warehouses = sorted(
+        {
+            str(row["warehouse_id"])
+            for _, row in orders_df.iterrows()
+            if str(row["warehouse_id"]) not in warehouse_ids
+        }
+    )
+    if missing_order_warehouses:
+        errors.append(
+            "orders reference unknown warehouses: " + ", ".join(missing_order_warehouses)
+        )
+
+    if errors:
+        raise ValueError("; ".join(errors))
+
+
 def _load_historical_cases(data_dir: Path | None = None) -> list:
     """Load historical cases from CSV into HistoricalCase models."""
     from core.models import HistoricalCase
@@ -126,6 +217,13 @@ def load_initial_state(data_dir: Path | None = None) -> SystemState:
     routes_df = _read_csv("routes.csv", data_dir)
     warehouses_df = _read_csv("warehouses.csv", data_dir)
     orders_df = _read_csv("orders.csv", data_dir)
+    _validate_seed_data(
+        inventory_df=inventory_df,
+        suppliers_df=suppliers_df,
+        routes_df=routes_df,
+        warehouses_df=warehouses_df,
+        orders_df=orders_df,
+    )
     try:
         demands_df = _read_csv("demands.csv", data_dir)
         demands = [DemandRecord(**row.to_dict()) for _, row in demands_df.iterrows()]

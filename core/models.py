@@ -62,7 +62,7 @@ class SupplierRecord(BaseModel):
     reliability: float = Field(ge=0.0, le=1.0)
     is_primary: bool = False
     status: str = "active"
-    capacity: int = Field(default=9999, ge=0)
+    capacity: int = Field(default=1_000_000, ge=0)
 
 
 class RouteRecord(BaseModel):

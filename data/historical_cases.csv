@@ -8,4 +8,3 @@ CASE_2024_006,route_blockage,0.4,"REROUTE SKU_1 to backup route|monitor only",0.
 CASE_2024_007,demand_spike,0.85,"REORDER all SKUs x2|SWITCH_SUPPLIER to SUP_B|add buffer stock",0.90,7200.0,0.35,0.65,Extreme demand spike required multi-SKU emergency reorder. Margin compressed but service level held.
 CASE_2024_008,supplier_delay,0.95,"EMERGENCY SWITCH_SUPPLIER|expedite REORDER|REROUTE to fastest route",0.80,9100.0,0.40,0.55,Critical supplier failure at peak season. Required full emergency protocol. Cost was very high but stockout was avoided.
 CASE_2025_MEGA_DISASTER,compound,0.98,"FULL REDIRECT|SWITCH_SUPPLIER to backup network|REBALANCE global inventory",0.85,15000.0,0.50,0.40,Matched a severe regional blackout + port strike. Using backup suppliers immediately and accepting 3x cost was the only way to maintain 85% service level.
-

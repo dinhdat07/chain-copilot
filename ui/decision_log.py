@@ -12,10 +12,9 @@ from ui.components import (
     rejected_actions_dataframe,
     render_score_breakdown,
     render_kpi_comparison_chart,
-    score_breakdown_dataframe,
     styled_table,
 )
-from ui.styles import badge, section_header
+from ui.styles import section_header
 
 
 def _render_decision_details(log: DecisionLog) -> None:
@@ -145,31 +144,13 @@ def render_page(state: SystemState, store: SQLiteStore) -> None:
         if sup_df.empty:
             st.info("No supplier learning data yet.")
         else:
-            import plotly.express as px
-            fig = px.bar(sup_df, x="Supplier", y="Reliability", color="Reliability",
-                         color_continuous_scale=["#EE5D50", "#FFB547", "#05CD99"],
-                         range_color=[0, 1])
-            fig.update_layout(height=260, font=dict(family="Plus Jakarta Sans", color="#A3AED0"), yaxis_tickformat=".0%",
-                              margin=dict(l=0,r=0,t=20,b=0), paper_bgcolor="rgba(0,0,0,0)",
-                              plot_bgcolor="rgba(0,0,0,0)")
-            fig.update_xaxes(gridcolor="#E2E8F0", tickfont=dict(color="#A3AED0"))
-            fig.update_yaxes(gridcolor="#E2E8F0", tickfont=dict(color="#A3AED0"))
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+            styled_table(sup_df)
 
     with tab_route:
         if route_df.empty:
             st.info("No route learning data yet.")
         else:
-            import plotly.express as px
-            fig = px.bar(route_df, x="Route", y="Disruption Prior", color="Disruption Prior",
-                         color_continuous_scale=["#05CD99", "#FFB547", "#EE5D50"],
-                         range_color=[0, 1])
-            fig.update_layout(height=260, font=dict(family="Plus Jakarta Sans", color="#A3AED0"), yaxis_tickformat=".0%",
-                              margin=dict(l=0,r=0,t=20,b=0), paper_bgcolor="rgba(0,0,0,0)",
-                              plot_bgcolor="rgba(0,0,0,0)")
-            fig.update_xaxes(gridcolor="#E2E8F0", tickfont=dict(color="#A3AED0"))
-            fig.update_yaxes(gridcolor="#E2E8F0", tickfont=dict(color="#A3AED0"))
-            st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+            styled_table(route_df)
 
     with tab_scen:
         if scen_df.empty:

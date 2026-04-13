@@ -27,16 +27,17 @@ def test_decision_log_contains_grounded_explanation() -> None:
     assert decision.approval_reason
     assert decision.approval_required is True
     assert decision.rejected_actions
-    assert all(
-        item["reason"] != "not selected in final plan"
-        for item in decision.rejected_actions
-    )
+    assert all(item["reason"] != "not selected in final plan" for item in decision.rejected_actions)
 
 
 def test_scenario_run_persists_learned_memory_to_state_snapshot(tmp_path: Path) -> None:
     store = SQLiteStore(tmp_path / "chaincopilot.db")
     state = load_initial_state()
-    initial_reliability = state.suppliers["SUP_A_SKU_001"].reliability
+    initial_reliability = next(
+        record.reliability
+        for record in state.suppliers.values()
+        if record.supplier_id == "SUP_A"
+    )
 
     result = ScenarioRunner(store=store).run(state, "supplier_delay")
 
@@ -46,14 +47,9 @@ def test_scenario_run_persists_learned_memory_to_state_snapshot(tmp_path: Path) 
     assert result.scenario_history[-1].reflection_status == "pending_approval"
 
     with sqlite3.connect(store.path) as conn:
-        row = conn.execute(
-            "SELECT payload FROM state_snapshots WHERE run_id = ?", (result.run_id,)
-        ).fetchone()
+        row = conn.execute("SELECT payload FROM state_snapshots WHERE run_id = ?", (result.run_id,)).fetchone()
     payload = json.loads(row[0])
-    assert (
-        payload["memory"]["supplier_reliability"]["SUP_A"]
-        == result.memory.supplier_reliability["SUP_A"]
-    )
+    assert payload["memory"]["supplier_reliability"]["SUP_A"] == result.memory.supplier_reliability["SUP_A"]
     assert payload["memory"]["scenario_outcomes"]["supplier_delay"]["runs"] == 1
 
 
@@ -65,14 +61,10 @@ def test_repeated_scenario_runs_accumulate_memory_history(tmp_path: Path) -> Non
 
     state = runner.run(state, "route_blockage")
     if state.pending_plan and state.decision_logs:
-        state = approve_pending_plan(
-            state, store, state.decision_logs[-1].decision_id, True
-        )
+        state = approve_pending_plan(state, store, state.decision_logs[-1].decision_id, True)
     state = runner.run(state, "route_blockage")
     if state.pending_plan and state.decision_logs:
-        state = approve_pending_plan(
-            state, store, state.decision_logs[-1].decision_id, True
-        )
+        state = approve_pending_plan(state, store, state.decision_logs[-1].decision_id, True)
 
     assert state.memory is not None
     history = state.memory.scenario_outcomes["route_blockage"]["history"]

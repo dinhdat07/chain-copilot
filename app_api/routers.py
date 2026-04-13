@@ -38,6 +38,7 @@ from app_api.schemas import (
     WhatIfRequest,
 )
 from app_api.services import (
+    action_execution_record_view,
     approval_command_result_view,
     approval_detail_view,
     ControlTowerRuntime,

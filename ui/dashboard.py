@@ -12,7 +12,7 @@ if str(ROOT) not in sys.path:
 from core.memory import SQLiteStore  # noqa: E402
 from core.state import load_initial_state  # noqa: E402
 from orchestrator.service import reset_runtime  # noqa: E402
-from ui import decision_log, overview, scenarios, what_if  # noqa: E402
+from ui import agent_visualization, decision_log, overview, scenarios, what_if  # noqa: E402
 from ui.styles import inject_css  # noqa: E402
 
 
@@ -25,6 +25,7 @@ def _ensure_state() -> None:
 
 PAGES = {
     "Overview":        ":material/dashboard:",
+    "AI Agents":       ":material/hub:",
     "Scenarios":       ":material/science:",
     "Decision Log":    ":material/list_alt:",
     "What-if":         ":material/auto_awesome:",
@@ -54,7 +55,6 @@ def main() -> None:
         st.markdown("---")
 
         # Navigation
-        selected = None
         for pg, icon in PAGES.items():
             if st.button(f"{pg}", icon=icon, key=f"nav_{pg}", use_container_width=True):
                 st.session_state["current_page"] = pg

@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import pandas as pd
-import plotly.graph_objects as go
 import streamlit as st
 
 from core.models import SystemState
@@ -22,25 +21,12 @@ from ui.styles import section_header
 
 
 def _cost_comparison_chart(before_cost: float, after_cost: float) -> None:
-    """Horizontal bar chart comparing total cost."""
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        y=["Simulated", "Current"], x=[after_cost, before_cost],
-        orientation="h",
-        marker_color=["#4318FF", "#E2E8F0"],
-        text=[f"${after_cost:,.0f}", f"${before_cost:,.0f}"],
-        textposition="outside",
-    ))
-    fig.update_layout(
-        height=140,
-        font=dict(family="Plus Jakarta Sans, sans-serif", size=12, color="#A3AED0"),
-        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)",
-        margin=dict(l=0, r=80, t=10, b=0),
-        showlegend=False,
-        xaxis=dict(gridcolor="#E2E8F0", zerolinecolor="#E2E8F0"),
-        yaxis=dict(gridcolor="#E2E8F0"),
+    """Simple bar chart comparing total cost."""
+    chart = pd.DataFrame(
+        {"Total Cost": [before_cost, after_cost]},
+        index=["Current", "Simulated"],
     )
-    st.plotly_chart(fig, use_container_width=True, config={"displayModeBar": False})
+    st.bar_chart(chart)
 
 
 def render_page(state: SystemState) -> None:

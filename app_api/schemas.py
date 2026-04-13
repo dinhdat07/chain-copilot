@@ -6,13 +6,7 @@ from typing import Any, Literal
 from pydantic import BaseModel, Field
 
 from core.enums import EventType
-from core.runtime_records import (
-    DispatchMode,
-    EventClass,
-    ExecutionStatus,
-    RunStatus,
-    RunType,
-)
+from core.runtime_records import DispatchMode, EventClass, ExecutionStatus, RunStatus, RunType
 
 
 class ScenarioRequest(BaseModel):
@@ -168,12 +162,8 @@ class PendingApprovalView(BaseModel):
     decision_id: str
     approval_status: str
     approval_reason: str
-    allowed_actions: list[str] = Field(
-        default_factory=lambda: ["approve", "reject", "safer_plan"]
-    )
-    blocking_operations: list[str] = Field(
-        default_factory=lambda: ["plan_daily", "scenario_run"]
-    )
+    allowed_actions: list[str] = Field(default_factory=lambda: ["approve", "reject", "safer_plan"])
+    blocking_operations: list[str] = Field(default_factory=lambda: ["plan_daily", "scenario_run"])
     selection_reason: str = ""
     selected_actions: list[str] = Field(default_factory=list)
     before_kpis: KPIView

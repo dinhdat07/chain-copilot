@@ -124,12 +124,12 @@ def test_partial_planner_output_is_repaired_not_fully_fallback(monkeypatch) -> N
                 "candidate_plans": [
                     {
                         "strategy_label": "Plan A",
-                        "action_ids": ["act_supplier_SKU_1_SUP_B"],
+                        "action_ids": ["act_supplier_SKU_001_SUP_B"],
                         "rationale": "cheap supplier substitution",
                     },
                     {
                         "strategy_label": "Plan B",
-                        "recommended_action_ids": ["R4"],
+                        "recommended_action_ids": ["R2"],
                         "rationale": "balanced route protection",
                     },
                 ]
@@ -147,8 +147,8 @@ def test_partial_planner_output_is_repaired_not_fully_fallback(monkeypatch) -> N
     event = _event(
         EventType.SUPPLIER_DELAY,
         0.8,
-        {"supplier_id": "SUP_A", "sku": "SKU_1", "delay_hours": 48},
-        ["SUP_A", "SKU_1"],
+        {"supplier_id": "SUP_A", "sku": "SKU_001", "delay_hours": 48},
+        ["SUP_A", "SKU_001"],
     )
 
     result = build_graph().invoke(state, event)

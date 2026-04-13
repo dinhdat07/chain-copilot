@@ -37,8 +37,8 @@ def get_scenario_events(name: str) -> list[Event]:
                 event_id="evt_supplier_delay",
                 event_type=EventType.SUPPLIER_DELAY,
                 severity=0.80,
-                payload={"supplier_id": "SUP_A", "sku": "SKU_1", "delay_hours": 48},
-                entity_ids=["SUP_A", "SKU_1"],
+                payload={"supplier_id": "SUP_A", "sku": "SKU_001", "delay_hours": 48},
+                entity_ids=["SUP_A", "SKU_001"],
             )
         ],
         "demand_spike": [
@@ -46,8 +46,8 @@ def get_scenario_events(name: str) -> list[Event]:
                 event_id="evt_demand_spike",
                 event_type=EventType.DEMAND_SPIKE,
                 severity=0.70,
-                payload={"sku": "SKU_2", "multiplier": 2.2},
-                entity_ids=["SKU_2"],
+                payload={"sku": "SKU_024", "multiplier": 2.2},
+                entity_ids=["SKU_024"],
             )
         ],
         "route_blockage": [
@@ -64,15 +64,15 @@ def get_scenario_events(name: str) -> list[Event]:
                 event_id="evt_compound_delay",
                 event_type=EventType.COMPOUND,
                 severity=0.92,
-                payload={"supplier_id": "SUP_A", "route_id": "R1", "sku": "SKU_1"},
-                entity_ids=["SUP_A", "R1", "SKU_1"],
+                payload={"supplier_id": "SUP_A", "route_id": "R1", "sku": "SKU_001"},
+                entity_ids=["SUP_A", "R1", "SKU_001"],
             ),
             build_event(
                 event_id="evt_compound_spike",
                 event_type=EventType.DEMAND_SPIKE,
                 severity=0.75,
-                payload={"sku": "SKU_2", "multiplier": 1.9},
-                entity_ids=["SKU_2"],
+                payload={"sku": "SKU_024", "multiplier": 1.9},
+                entity_ids=["SKU_024"],
             ),
         ],
     }

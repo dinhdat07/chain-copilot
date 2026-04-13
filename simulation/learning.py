@@ -3,13 +3,7 @@ from __future__ import annotations
 from uuid import uuid4
 
 from core.enums import ApprovalStatus, EventType
-from core.models import (
-    DecisionLog,
-    MemorySnapshot,
-    ReflectionNote,
-    ScenarioRun,
-    SystemState,
-)
+from core.models import DecisionLog, MemorySnapshot, ReflectionNote, ScenarioRun, SystemState
 from core.state import default_memory, utc_now
 from llm.service import generate_reflection_note
 
@@ -32,30 +26,25 @@ def _latest_run(state: SystemState) -> ScenarioRun | None:
     return state.scenario_history[-1] if state.scenario_history else None
 
 
-def _update_supplier_learning(
-    state: SystemState, supplier_id: str, severity: float
-) -> float | None:
+def _update_supplier_learning(state: SystemState, supplier_id: str, severity: float) -> float | None:
     updated = None
-    for key, record in state.suppliers.items():
-        if record.supplier_id == supplier_id:
-            memory = state.memory or default_memory()
-            current = memory.supplier_reliability.get(supplier_id, record.reliability)
-            updated = _bounded(current - (0.06 * severity))
-            memory.supplier_reliability[supplier_id] = updated
-            record.reliability = updated
-            state.memory = memory
+    for _, record in state.suppliers.items():
+        if record.supplier_id != supplier_id:
+            continue
+        memory = state.memory or default_memory()
+        current = memory.supplier_reliability.get(supplier_id, record.reliability)
+        updated = _bounded(current - (0.06 * severity))
+        memory.supplier_reliability[supplier_id] = updated
+        record.reliability = updated
+        state.memory = memory
     return updated
 
 
-def _update_route_learning(
-    state: SystemState, route_id: str, severity: float
-) -> float | None:
+def _update_route_learning(state: SystemState, route_id: str, severity: float) -> float | None:
     if route_id not in state.routes:
         return None
     memory = state.memory or default_memory()
-    current = memory.route_disruption_priors.get(
-        route_id, state.routes[route_id].risk_score
-    )
+    current = memory.route_disruption_priors.get(route_id, state.routes[route_id].risk_score)
     updated = _bounded(current + (0.08 * severity))
     memory.route_disruption_priors[route_id] = updated
     state.routes[route_id].risk_score = updated
@@ -63,18 +52,14 @@ def _update_route_learning(
     return updated
 
 
-def _update_numeric_learning(
-    state: SystemState, run: ScenarioRun
-) -> tuple[dict[str, float], dict[str, float]]:
+def _update_numeric_learning(state: SystemState, run: ScenarioRun) -> tuple[dict[str, float], dict[str, float]]:
     supplier_updates: dict[str, float] = {}
     route_updates: dict[str, float] = {}
     for event in run.events:
         supplier_id = event.payload.get("supplier_id")
         route_id = event.payload.get("route_id")
         if supplier_id and event.type in {EventType.SUPPLIER_DELAY, EventType.COMPOUND}:
-            updated_supplier = _update_supplier_learning(
-                state, supplier_id, event.severity
-            )
+            updated_supplier = _update_supplier_learning(state, supplier_id, event.severity)
             if updated_supplier is not None:
                 supplier_updates[supplier_id] = updated_supplier
         if route_id and event.type in {EventType.ROUTE_BLOCKAGE, EventType.COMPOUND}:
@@ -92,9 +77,7 @@ def _build_outcome_summary(
     route_updates: dict[str, float],
 ) -> dict:
     approval_status = (
-        latest_decision.approval_status.value
-        if latest_decision
-        else ApprovalStatus.NOT_REQUIRED.value
+        latest_decision.approval_status.value if latest_decision else ApprovalStatus.NOT_REQUIRED.value
     )
     return {
         "run_id": run.run_id,
@@ -131,13 +114,9 @@ def _save_outcome_summary(state: SystemState, run: ScenarioRun) -> None:
         run.scenario_id,
         {"runs": 0, "history": []},
     )
-    history = _upsert_history(
-        list(scenario_state.get("history", [])), run.outcome_summary
-    )
+    history = _upsert_history(list(scenario_state.get("history", [])), run.outcome_summary)
     previous_runs = int(scenario_state.get("runs", 0))
-    run_seen = any(
-        item.get("run_id") == run.run_id for item in scenario_state.get("history", [])
-    )
+    run_seen = any(item.get("run_id") == run.run_id for item in scenario_state.get("history", []))
     scenario_state.update(
         {
             "runs": previous_runs if run_seen else previous_runs + 1,
@@ -176,9 +155,7 @@ def _deterministic_reflection_note(
         {
             primary_event,
             state.mode.value,
-            "approval_required"
-            if run.approval_status in FINAL_APPROVAL_STATUSES
-            else "approval_pending",
+            "approval_required" if run.approval_status in FINAL_APPROVAL_STATUSES else "approval_pending",
         }
     )
     checks = [
@@ -216,9 +193,7 @@ def _store_reflection(memory: MemorySnapshot, note: ReflectionNote) -> None:
     memory.pattern_tag_counts = counts
 
 
-def _finalize_reflection_note(
-    state: SystemState, run: ScenarioRun
-) -> ReflectionNote | None:
+def _finalize_reflection_note(state: SystemState, run: ScenarioRun) -> ReflectionNote | None:
     decision_log = _latest_decision(state)
     if run.approval_status not in FINAL_APPROVAL_STATUSES:
         return None
@@ -249,9 +224,7 @@ def _refresh_run_from_state(state: SystemState, run: ScenarioRun) -> None:
     run.decision_id = decision_log.decision_id if decision_log else run.decision_id
     run.result_kpis = state.kpis.model_copy(deep=True)
     run.approval_status = (
-        decision_log.approval_status.value
-        if decision_log
-        else ApprovalStatus.NOT_REQUIRED.value
+        decision_log.approval_status.value if decision_log else ApprovalStatus.NOT_REQUIRED.value
     )
 
 
