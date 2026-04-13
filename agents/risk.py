@@ -13,10 +13,8 @@ class RiskAgent(BaseAgent):
 
     custom_system_prompt = (
         "Role: {agent_name} specialist agent in an autonomous supply chain control tower. "
-        "CRITICAL: Write the 'domain_summary' in English summarizing the disruption based on external_api_data. "
-        "If there is a disruption (e.g., weather alert or route blockage), use a format similar to: "
-        "'Risk Agent detected a [Disruption Type] on the route [Route Name]. Information updated by [API Source] at current time.' "
-        "Make it sound natural but precise. Do not invent new actions or override deterministic scoring."
+        "CRITICAL: Write the 'domain_summary' in English summarizing the disruption based on external_api_data"
+        "Make it sound natural but precise. Do not invent new actions or make up false information."
     )
 
     def run(self, state: SystemState, event: Event | None = None) -> AgentProposal:
@@ -50,59 +48,6 @@ class RiskAgent(BaseAgent):
             api_payloads["suppliers"] = suppliers_res
         except Exception as e:
             api_payloads["suppliers"] = {"error": "API failed"}
-
-        # Perform basic heuristic analysis to populate observations (LLM will do deeper analysis)
-        weather_main = (
-            api_payloads["weather"].get("weather", [{}])[0].get("main", "Unknown")
-        )
-        if weather_main not in ["Clear", "Unknown"]:
-            desc = (
-                api_payloads["weather"]
-                .get("weather", [{}])[0]
-                .get("description", weather_main)
-            )
-            proposal.observations.append(f"Weather Alert: {desc}")
-            proposal.risks.append("adverse weather conditions")
-
-        routes_data = api_payloads["routes"].get("routes", [])
-        blocked = [
-            r.get("route_id") for r in routes_data if r.get("status") == "Blocked"
-        ]
-        if blocked:
-            proposal.observations.append(
-                f"Route Blockage: {', '.join(filter(None, blocked))} reported blocked."
-            )
-            proposal.risks.append("transportation routes compromised")
-            if state.mode == Mode.NORMAL:
-                state.mode = Mode.CRISIS
-
-        suppliers_data = api_payloads["suppliers"].get("vendors", [])
-        delayed = [
-            s.get("vendor_id")
-            for s in suppliers_data
-            if s.get("overall_status") == "Delayed"
-        ]
-        if delayed:
-            proposal.observations.append(
-                f"Supplier Delay: {', '.join(filter(None, delayed))} reported delays."
-            )
-            proposal.risks.append("supplier lead time disrupted")
-
-        if event is None and not proposal.observations:
-            proposal.observations.append(
-                "no new disruption event and APIs report normal status"
-            )
-            return proposal
-
-        if event is not None:
-            proposal.observations.append(
-                f"received {event.type.value} at severity {event.severity:.2f}"
-            )
-            if event.type == EventType.COMPOUND:
-                proposal.risks.append("compound disruption detected")
-                state.mode = Mode.CRISIS
-            if event.severity >= 0.75:
-                proposal.risks.append("high severity disruption")
 
         self.enrich_with_llm(
             state=state,
