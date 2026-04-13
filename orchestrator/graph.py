@@ -218,9 +218,7 @@ class LangGraphControlTower:
     def _risk_route_reason(self, outcome: str) -> str:
         if outcome == "approval":
             return "pending approval already exists or the system is already in approval mode"
-        if outcome == "crisis":
-            return "risk agent escalated the system into crisis mode"
-        return "risk agent kept the system in normal mode"
+        return f"dynamic routing assigned the next agent as {outcome}"
 
     def _critic_route_reason(self, state: SystemState, outcome: str) -> str:
         if outcome == "approval":
@@ -266,13 +264,11 @@ class LangGraphControlTower:
             state,
             "risk",
             risk_route,
-            "approval" if risk_route == "approval" else "supplier",
+            risk_route,
             self._risk_route_reason(risk_route),
         )
         if state.latest_trace is not None:
-            state.latest_trace.current_branch = (
-                "crisis" if risk_route == "crisis" else risk_route
-            )
+            state.latest_trace.current_branch = state.mode.value
         return {"state": state, "event": event, "started_at": graph_state["started_at"]}
 
     def demand_node(self, graph_state: OrchestrationState) -> OrchestrationState:
@@ -481,15 +477,17 @@ class LangGraphControlTower:
             "risk",
             route_after_risk,
             {
-                "normal": "supplier",
-                "crisis": "supplier",
+                "logistics": "logistics",
+                "supplier": "supplier",
+                "demand": "demand",
+                "planner": "planner",
                 "approval": "approval",
             },
         )
-        graph.add_edge("supplier", "demand")
+        graph.add_edge("logistics", "supplier")
+        graph.add_edge("supplier", "planner")
         graph.add_edge("demand", "inventory")
-        graph.add_edge("inventory", "logistics")
-        graph.add_edge("logistics", "planner")
+        graph.add_edge("inventory", "planner")
         graph.add_conditional_edges(
             "planner",
             route_after_planner,
