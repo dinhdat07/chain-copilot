@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import socket
 from urllib import error, request
 
 from llm.config import LLMSettings
@@ -62,6 +63,10 @@ class GeminiClient:
             raise GeminiClientError(f"gemini http error {exc.code}: {detail}") from exc
         except error.URLError as exc:
             raise GeminiClientError(f"gemini connection error: {exc.reason}") from exc
+        except (TimeoutError, socket.timeout) as exc:
+            raise GeminiClientError("gemini request timed out") from exc
+        except OSError as exc:
+            raise GeminiClientError(f"gemini transport error: {exc}") from exc
         except json.JSONDecodeError as exc:
             raise GeminiClientError("gemini returned invalid json") from exc
 

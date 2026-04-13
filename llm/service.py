@@ -4,6 +4,7 @@ import json
 import re
 from typing import Any
 
+from core.logger import get_logger
 from core.models import (
     Action,
     AgentProposal,
@@ -18,6 +19,7 @@ from core.models import (
 )
 from llm.config import load_settings
 from llm.gemini_client import GeminiClient, GeminiClientError
+from llm.vertex_client import VertexClientError, VertexGeminiClient
 from orchestrator.prompts import (
     DECISION_EXPLANATION_PROMPT,
     AI_CANDIDATE_PLANNER_PROMPT,
@@ -29,6 +31,16 @@ from orchestrator.prompts import (
     SPECIALIST_AGENT_PROMPT,
     SPECIALIST_REASONING_PROMPT,
 )
+
+logger = get_logger(__name__)
+
+
+def _provider_client(settings):
+    if settings.provider == "gemini":
+        return GeminiClient(settings)
+    if settings.provider == "vertex":
+        return VertexGeminiClient(settings)
+    return None
 
 
 ENRICHMENT_SCHEMA = {
@@ -147,24 +159,54 @@ def _call_json_model(
 ) -> tuple[dict | None, str | None, str | None]:
     settings = load_settings()
     if not settings.enabled:
-        return None, None, None
+        logger.info("llm capability=%s skipped: llm disabled", capability)
+        return None, None, "llm_disabled" if capability == "planner" else None
     if capability == "planner" and settings.planner_mode == "deterministic":
+        logger.info("llm capability=%s skipped: planner mode is deterministic", capability)
         return None, settings.provider, "planner_mode=deterministic"
-    if settings.provider != "gemini":
+    client = _provider_client(settings)
+    if client is None:
+        logger.warning(
+            "llm capability=%s skipped: unsupported provider=%s",
+            capability,
+            settings.provider,
+        )
         return None, settings.provider, f"unsupported provider: {settings.provider}"
     last_error: str | None = None
-    client = GeminiClient(settings)
     for attempt in range(1, settings.retry_attempts + 1):
+        logger.info(
+            "llm capability=%s call start provider=%s model=%s attempt=%s/%s",
+            capability,
+            settings.provider,
+            settings.model,
+            attempt,
+            settings.retry_attempts,
+        )
         try:
             response = client.generate_json(
                 prompt=prompt,
                 schema=schema,
             )
-        except GeminiClientError as exc:
+        except (GeminiClientError, VertexClientError) as exc:
             last_error = str(exc)
+            logger.warning(
+                "llm capability=%s call failed attempt=%s/%s error=%s",
+                capability,
+                attempt,
+                settings.retry_attempts,
+                last_error,
+            )
             if attempt >= settings.retry_attempts:
                 break
             continue
+        logger.info(
+            "llm capability=%s call succeeded provider=%s model=%s attempt=%s/%s",
+            capability,
+            settings.provider,
+            settings.model,
+            attempt,
+            settings.retry_attempts,
+        )
         return response, settings.provider, None
     return None, settings.provider, last_error
 
@@ -533,6 +575,7 @@ def generate_candidate_plan_drafts(
         capability="planner",
     )
     if response is None:
+        logger.info("planner llm path not used: %s", error or "unknown_reason")
         return [], error
 
     allowed_ids = {action.action_id for action in candidate_actions}
@@ -558,6 +601,11 @@ def generate_candidate_plan_drafts(
                 llm_used=True,
             )
         )
+    logger.info(
+        "planner llm returned candidate_plans=%s normalized_drafts=%s",
+        len(response.get("candidate_plans", [])),
+        len(drafts),
+    )
     return drafts, None
 
 
@@ -699,22 +747,39 @@ def enrich_plan_and_decision(
 
     decision_log.llm_provider = settings.provider
     decision_log.llm_model = settings.model
-    if settings.provider != "gemini":
+    client = _provider_client(settings)
+    if client is None:
         decision_log.llm_used = False
         decision_log.llm_error = f"unsupported provider: {settings.provider}"
         return
 
     prompt = _build_prompt(state=state, event=event, plan=plan, decision_log=decision_log)
     try:
-        response = GeminiClient(settings).generate_json(
+        logger.info(
+            "llm capability=enrichment call start provider=%s model=%s",
+            settings.provider,
+            settings.model,
+        )
+        response = client.generate_json(
             prompt=prompt,
             schema=ENRICHMENT_SCHEMA,
         )
-    except GeminiClientError as exc:
+    except (GeminiClientError, VertexClientError) as exc:
+        logger.warning(
+            "llm capability=enrichment call failed provider=%s model=%s error=%s",
+            settings.provider,
+            settings.model,
+            exc,
+        )
         decision_log.llm_used = False
         decision_log.llm_error = str(exc)
         plan.llm_planner_narrative = None
         return
+    logger.info(
+        "llm capability=enrichment call succeeded provider=%s model=%s",
+        settings.provider,
+        settings.model,
+    )
 
     planner_narrative = str(response.get("planner_narrative", "")).strip()
     operator_explanation = str(response.get("operator_explanation", "")).strip()
