@@ -11,31 +11,53 @@ from core.models import Action, AgentProposal, Event, SystemState
 
 class DemandAgent(BaseAgent):
     name = "demand"
+    custom_system_prompt = """You are the Demand Agent for a supply chain management system.
+Your role is to analyze demand spikes, historical demand patterns, and forecast future demand.
+When a disruption or event occurs (like a DEMAND_SPIKE), you evaluate how it impacts the required inventory levels.
+Provide a concise, professional summary (under 4 sentences) of your demand analysis, the specific SKU affected, and your recommendations.
+Write the summary entirely in English. Do NOT use markdown formatting or bullet points in the summary."""
 
     def run(self, state: SystemState, event: Event | None = None) -> AgentProposal:
         proposal = AgentProposal(agent=self.name)
         grouped: dict[str, list[tuple[int, int]]] = defaultdict(list)
-        for order in state.orders:
-            grouped[order.sku].append((order.day_index, order.quantity))
+        for demand in state.demands:
+            grouped[demand.sku].append((demand.day_index, demand.quantity))
 
         multiplier = 1.0
         event_sku = None
         if event and event.type == EventType.DEMAND_SPIKE:
             multiplier = float(event.payload.get("multiplier", 1.5))
             event_sku = event.payload.get("sku")
-            proposal.observations.append(f"demand spike multiplier applied: {multiplier:.2f}")
+            proposal.observations.append(
+                f"demand spike multiplier applied: {multiplier:.2f}"
+            )
 
         for sku, points in grouped.items():
-            df = pd.DataFrame(points, columns=["day_index", "quantity"]).sort_values("day_index")
-            rolling = df["quantity"].tail(3).mean()
-            forecast = int(round(rolling if not pd.isna(rolling) else df["quantity"].mean()))
+            df = pd.DataFrame(points, columns=["day_index", "quantity"]).sort_values(
+                "day_index"
+            )
+            df_30 = df.tail(30)
+
+            avg_d = df_30["quantity"].mean()
+            std_d = df_30["quantity"].std()
+
+            forecast = int(round(avg_d)) if pd.notna(avg_d) else 0
+            std_d_val = float(std_d) if pd.notna(std_d) else 0.0
+
             if sku == event_sku:
                 forecast = int(round(forecast * multiplier))
             if sku in state.inventory:
                 state.inventory[sku].forecast_qty = max(0, forecast)
-                proposal.observations.append(f"{sku} forecast set to {forecast}")
+                state.inventory[sku].std_demand = std_d_val
+                proposal.observations.append(
+                    f"{sku} historical demand (30 days): Avg = {forecast}, Std Dev = {std_d_val:.2f}"
+                )
 
-        if event and event.type == EventType.DEMAND_SPIKE and event_sku in state.inventory:
+        if (
+            event
+            and event.type == EventType.DEMAND_SPIKE
+            and event_sku in state.inventory
+        ):
             item = state.inventory[event_sku]
             proposal.proposals.append(
                 Action(

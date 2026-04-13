@@ -67,6 +67,9 @@ from core.models import DecisionLog, OrchestrationTrace
 from core.runtime_records import RunRecord
 
 
+MOCK_ENVIRONMENT = "normal"
+
+
 def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRouter:
     router = APIRouter(
         prefix="/api/v1",
@@ -77,6 +80,242 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
             500: {"model": ErrorResponse},
         },
     )
+
+    @router.get("/mock/weather")
+    def mock_weather() -> dict:
+        global MOCK_ENVIRONMENT
+        if MOCK_ENVIRONMENT in ["route_blockage", "compound_disruption"]:
+            return {
+                "coord": {"lon": 105.8412, "lat": 21.0245},
+                "weather": [
+                    {
+                        "id": 501,
+                        "main": "Rain",
+                        "description": "heavy intensity rain and localized flooding",
+                        "icon": "10d",
+                    },
+                    {
+                        "id": 202,
+                        "main": "Thunderstorm",
+                        "description": "thunderstorm with heavy rain",
+                        "icon": "11d",
+                    },
+                ],
+                "base": "stations",
+                "main": {
+                    "temp": 298.48,
+                    "feels_like": 298.74,
+                    "temp_min": 297.56,
+                    "temp_max": 300.05,
+                    "pressure": 1015,
+                    "humidity": 89,
+                    "sea_level": 1015,
+                    "grnd_level": 1013,
+                },
+                "visibility": 2000,
+                "wind": {"speed": 12.5, "deg": 140, "gust": 18.2},
+                "clouds": {"all": 90},
+                "dt": 1661870592,
+                "sys": {
+                    "type": 2,
+                    "id": 2004688,
+                    "country": "VN",
+                    "sunrise": 1661834187,
+                    "sunset": 1661879324,
+                },
+                "timezone": 25200,
+                "id": 1581130,
+                "name": "Hanoi",
+                "cod": 200,
+                "alerts": [
+                    {
+                        "sender_name": "National Hydro-Meteorological Service",
+                        "event": "Severe Flooding",
+                        "start": 1661870592,
+                        "end": 1661956992,
+                        "description": "Expect heavy localized flooding. Avoid low-lying areas.",
+                        "affected_zones": [
+                            {"lat": 20.938611, "lng": 106.314444, "radius_km": 15},
+                            {"lat": 20.850000, "lng": 106.450000, "radius_km": 10},
+                        ],
+                    }
+                ],
+            }
+        return {
+            "coord": {"lon": 105.8412, "lat": 21.0245},
+            "weather": [
+                {"id": 800, "main": "Clear", "description": "clear sky", "icon": "01d"}
+            ],
+            "base": "stations",
+            "main": {
+                "temp": 302.15,
+                "feels_like": 305.82,
+                "temp_min": 301.15,
+                "temp_max": 303.15,
+                "pressure": 1012,
+                "humidity": 65,
+            },
+            "visibility": 10000,
+            "wind": {"speed": 3.6, "deg": 120},
+            "clouds": {"all": 0},
+            "name": "Hanoi",
+            "cod": 200,
+        }
+
+    @router.get("/mock/routes")
+    def mock_routes() -> dict:
+        global MOCK_ENVIRONMENT
+        if MOCK_ENVIRONMENT in ["route_blockage", "compound_disruption"]:
+            return {
+                "geocoded_waypoints": [
+                    {
+                        "geocoder_status": "OK",
+                        "place_id": "ChIJ_zX0nVQoNTERr2gQWwP1WlA",
+                        "types": ["locality", "political"],
+                    },
+                    {
+                        "geocoder_status": "OK",
+                        "place_id": "ChIJIQBpAG2ocg0RsT57aPz_v0w",
+                        "types": ["locality", "political"],
+                    },
+                ],
+                "routes": [
+                    {
+                        "route_id": "R1",
+                        "summary": "QL5 and AH14",
+                        "legs": [
+                            {
+                                "distance": {"text": "104 km", "value": 104320},
+                                "duration": {"text": "3 hours 45 mins", "value": 13500},
+                                "duration_in_traffic": {
+                                    "text": "4 hours 10 mins",
+                                    "value": 15000,
+                                },
+                                "steps": [],
+                                "traffic_speed_entry": [],
+                            }
+                        ],
+                        "warnings": [
+                            "Severe flooding detected on QL5 near Hai Duong.",
+                            "Road closure ahead due to submerged lane.",
+                            "Expect heavy delays and consider alternative routing.",
+                        ],
+                        "status": "Blocked",
+                        "closure_probability": 0.95,
+                        "incidents": [
+                            {
+                                "incident_id": "INC_001",
+                                "type": "ROAD_CLOSED",
+                                "description": "Lane submerged due to heavy flood",
+                                "location": {"lat": 20.938611, "lng": 106.314444},
+                            },
+                            {
+                                "incident_id": "INC_002",
+                                "type": "ROAD_CLOSED",
+                                "description": "Traffic accident associated with weather",
+                                "location": {"lat": 20.942150, "lng": 106.321890},
+                            },
+                        ],
+                    }
+                ],
+                "status": "OK",
+            }
+        return {
+            "geocoded_waypoints": [],
+            "routes": [
+                {
+                    "route_id": "R1",
+                    "summary": "QL5 and AH14",
+                    "legs": [
+                        {
+                            "distance": {"text": "104 km", "value": 104320},
+                            "duration": {"text": "1 hour 50 mins", "value": 6600},
+                            "duration_in_traffic": {
+                                "text": "1 hour 55 mins",
+                                "value": 6900,
+                            },
+                        }
+                    ],
+                    "warnings": [],
+                    "status": "Normal",
+                    "closure_probability": 0.05,
+                }
+            ],
+            "status": "OK",
+        }
+
+    @router.get("/mock/suppliers")
+    def mock_suppliers() -> dict:
+        global MOCK_ENVIRONMENT
+        if MOCK_ENVIRONMENT in ["supplier_delay", "compound_disruption"]:
+            return {
+                "vendor_api_version": "v2.1",
+                "timestamp": "2026-04-13T08:00:00Z",
+                "vendors": [
+                    {
+                        "vendor_id": "SUP_A",
+                        "company_name": "Alpha Manufacturing Ltd.",
+                        "region": "Shenzhen, CN",
+                        "compliance_score": 0.92,
+                        "facilities": [
+                            {
+                                "facility_id": "FAC_A1",
+                                "status": "Operational",
+                                "capacity_utilization": 0.85,
+                            },
+                            {
+                                "facility_id": "FAC_A2",
+                                "status": "Degraded",
+                                "capacity_utilization": 0.30,
+                                "active_alerts": [
+                                    {
+                                        "alert_code": "CRIT_LABOR_SHORTAGE",
+                                        "severity": "HIGH",
+                                        "message": "Significant labor shortage impacting production line 3.",
+                                    },
+                                    {
+                                        "alert_code": "MATERIAL_DELAY",
+                                        "severity": "MEDIUM",
+                                        "message": "Raw material shipments delayed at local port.",
+                                    },
+                                ],
+                            },
+                        ],
+                        "fulfillment_metrics": {
+                            "on_time_delivery_rate": 0.65,
+                            "average_delay_hours": 48.5,
+                            "defect_rate": 0.015,
+                        },
+                        "overall_status": "Delayed",
+                    }
+                ],
+            }
+        return {
+            "vendor_api_version": "v2.1",
+            "timestamp": "2026-04-13T08:00:00Z",
+            "vendors": [
+                {
+                    "vendor_id": "SUP_A",
+                    "company_name": "Alpha Manufacturing Ltd.",
+                    "region": "Shenzhen, CN",
+                    "compliance_score": 0.94,
+                    "facilities": [
+                        {
+                            "facility_id": "FAC_A1",
+                            "status": "Operational",
+                            "capacity_utilization": 0.78,
+                            "active_alerts": [],
+                        }
+                    ],
+                    "fulfillment_metrics": {
+                        "on_time_delivery_rate": 0.98,
+                        "average_delay_hours": 2.1,
+                        "defect_rate": 0.005,
+                    },
+                    "overall_status": "Normal",
+                }
+            ],
+        }
 
     @router.get("/control-tower/summary", response_model=ControlTowerSummaryResponse)
     def get_control_tower_summary() -> ControlTowerSummaryResponse:
@@ -94,13 +333,17 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
         return ServiceRuntimeResponse(item=service_runtime_view(runtime))
 
     @router.get("/inventory", response_model=InventoryListResponse)
-    def get_inventory(search: str | None = None, status: str | None = None) -> InventoryListResponse:
+    def get_inventory(
+        search: str | None = None, status: str | None = None
+    ) -> InventoryListResponse:
         runtime = runtime_getter()
         items = inventory_rows(runtime.state, search=search, status=status)
         return InventoryListResponse(items=items, total=len(items))
 
     @router.get("/suppliers", response_model=SupplierListResponse)
-    def get_suppliers(sku: str | None = None, status: str | None = None) -> SupplierListResponse:
+    def get_suppliers(
+        sku: str | None = None, status: str | None = None
+    ) -> SupplierListResponse:
         runtime = runtime_getter()
         items = supplier_rows(runtime.state, sku=sku, status=status)
         return SupplierListResponse(items=items, total=len(items))
@@ -108,13 +351,20 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
     @router.get("/events", response_model=EventListResponse)
     def get_events(limit: int = 20) -> EventListResponse:
         runtime = runtime_getter()
-        items = [item.model_copy(deep=True) for item in control_tower_summary(runtime.state).active_events[:max(limit, 0)]]
+        items = [
+            item.model_copy(deep=True)
+            for item in control_tower_summary(runtime.state).active_events[
+                : max(limit, 0)
+            ]
+        ]
         return EventListResponse(items=items, total=len(runtime.state.active_events))
 
     @router.get("/plans/latest", response_model=PlanDetailResponse)
     def get_latest_plan() -> PlanDetailResponse:
         runtime = runtime_getter()
-        return PlanDetailResponse(item=plan_view(runtime.state.pending_plan or runtime.state.latest_plan))
+        return PlanDetailResponse(
+            item=plan_view(runtime.state.pending_plan or runtime.state.latest_plan)
+        )
 
     @router.get("/approvals/pending", response_model=PendingApprovalResponse)
     def get_pending_approval() -> PendingApprovalResponse:
@@ -124,10 +374,16 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
     @router.get("/approvals/{decision_id}", response_model=ApprovalDetailResponse)
     def get_approval(decision_id: str) -> ApprovalDetailResponse:
         runtime = runtime_getter()
-        return ApprovalDetailResponse(item=approval_detail_view(runtime.state, decision_id))
+        return ApprovalDetailResponse(
+            item=approval_detail_view(runtime.state, decision_id)
+        )
 
-    @router.post("/approvals/{decision_id}", response_model=ApprovalCommandResultResponse)
-    def approval_command(decision_id: str, request: ApprovalCommandRequest) -> ApprovalCommandResultResponse:
+    @router.post(
+        "/approvals/{decision_id}", response_model=ApprovalCommandResultResponse
+    )
+    def approval_command(
+        decision_id: str, request: ApprovalCommandRequest
+    ) -> ApprovalCommandResultResponse:
         runtime = runtime_getter()
         runtime.approval_command(decision_id, request.action)
         resolved_decision_id = runtime.current_decision_id() or decision_id
@@ -148,13 +404,17 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
             ]
         )
 
-    @router.get("/decision-logs/{decision_id}", response_model=DecisionLogDetailResponse)
+    @router.get(
+        "/decision-logs/{decision_id}", response_model=DecisionLogDetailResponse
+    )
     def get_decision_log_detail(decision_id: str) -> DecisionLogDetailResponse:
         runtime = runtime_getter()
         payload = runtime.store.get_decision_log(decision_id)
         if payload is None:
             raise_not_found("decision", decision_id)
-        return DecisionLogDetailResponse(item=decision_detail_view(DecisionLog.model_validate(payload)))
+        return DecisionLogDetailResponse(
+            item=decision_detail_view(DecisionLog.model_validate(payload))
+        )
 
     @router.get("/trace/latest", response_model=TraceResponse)
     def get_latest_trace() -> TraceResponse:
@@ -174,13 +434,21 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
     @router.get("/state")
     def get_state() -> dict:
         runtime = runtime_getter()
-        return {"summary": control_tower_summary(runtime.state).model_dump(mode="json"), "state": runtime.state.model_dump(mode="json")}
+        return {
+            "summary": control_tower_summary(runtime.state).model_dump(mode="json"),
+            "state": runtime.state.model_dump(mode="json"),
+        }
 
     @router.post("/reset")
     def reset_state() -> dict:
+        global MOCK_ENVIRONMENT
+        MOCK_ENVIRONMENT = "normal"
         runtime = runtime_getter()
         runtime.reset()
-        return {"summary": control_tower_summary(runtime.state).model_dump(mode="json"), "state": runtime.state.model_dump(mode="json")}
+        return {
+            "summary": control_tower_summary(runtime.state).model_dump(mode="json"),
+            "state": runtime.state.model_dump(mode="json"),
+        }
 
     @router.post("/plan/daily")
     def daily_plan() -> dict:
@@ -189,7 +457,9 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
             runtime.run_daily()
         except HTTPException as exc:
             if exc.status_code == 409 and isinstance(exc.detail, dict):
-                raise HTTPException(status_code=409, detail=exc.detail["message"]) from exc
+                raise HTTPException(
+                    status_code=409, detail=exc.detail["message"]
+                ) from exc
             raise
         return runtime.legacy_response_payload()
 
@@ -271,37 +541,51 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
         payload = runtime.store.get_execution_record(execution_id)
         if payload is not None:
             return ExecutionDetailResponse(item=execution_record_view(payload))
-            
+
         # Try granular physical action records (prefix exec_)
         action_payload = runtime.store.get_action_execution_record(execution_id)
         if action_payload is not None:
-            return ExecutionDetailResponse(item=action_execution_record_view(action_payload))
-            
+            return ExecutionDetailResponse(
+                item=action_execution_record_view(action_payload)
+            )
+
         raise_not_found("execution", execution_id)
 
     @router.post("/execution/{plan_id}/dispatch", response_model=PlanDispatchResponse)
-    def dispatch_plan(plan_id: str, request: DispatchModeRequest) -> PlanDispatchResponse:
+    def dispatch_plan(
+        plan_id: str, request: DispatchModeRequest
+    ) -> PlanDispatchResponse:
         runtime = runtime_getter()
         return PlanDispatchResponse(**runtime.dispatch_plan(plan_id, request.mode))
 
-    @router.post("/execution/{execution_id}/progress", response_model=ActionExecutionRecordView)
-    def update_execution_progress(execution_id: str, request: ProgressRequest) -> ActionExecutionRecordView:
+    @router.post(
+        "/execution/{execution_id}/progress", response_model=ActionExecutionRecordView
+    )
+    def update_execution_progress(
+        execution_id: str, request: ProgressRequest
+    ) -> ActionExecutionRecordView:
         runtime = runtime_getter()
         return runtime.update_execution_progress(execution_id, request.percentage)
 
-    @router.post("/execution/{execution_id}/complete", response_model=ActionExecutionRecordView)
+    @router.post(
+        "/execution/{execution_id}/complete", response_model=ActionExecutionRecordView
+    )
     def complete_execution(execution_id: str) -> ActionExecutionRecordView:
         runtime = runtime_getter()
         return runtime.complete_execution(execution_id)
 
     @router.post("/scenarios/run")
     def run_scenario(request: ScenarioRequest) -> dict:
+        global MOCK_ENVIRONMENT
+        MOCK_ENVIRONMENT = request.scenario_name
         runtime = runtime_getter()
         try:
             runtime.run_scenario(request.scenario_name, seed=request.seed)
         except HTTPException as exc:
             if exc.status_code == 409 and isinstance(exc.detail, dict):
-                raise HTTPException(status_code=409, detail=exc.detail["message"]) from exc
+                raise HTTPException(
+                    status_code=409, detail=exc.detail["message"]
+                ) from exc
             raise
         payload = runtime.legacy_response_payload()
         payload["scenario_history_count"] = len(runtime.state.scenario_history)
@@ -310,7 +594,9 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
     @router.post("/decisions/{decision_id}/approve")
     def approve_decision(decision_id: str, request: LegacyApprovalRequest) -> dict:
         runtime = runtime_getter()
-        runtime.approval_command(decision_id, "approve" if request.approve else "reject")
+        runtime.approval_command(
+            decision_id, "approve" if request.approve else "reject"
+        )
         payload = runtime.legacy_response_payload()
         payload["approved"] = request.approve
         return payload

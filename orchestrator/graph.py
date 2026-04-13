@@ -13,11 +13,22 @@ from agents.planner import PlannerAgent
 from agents.risk import RiskAgent
 from agents.supplier import SupplierAgent
 from core.enums import ApprovalStatus, Mode, PlanStatus
-from core.models import AgentProposal, Event, OrchestrationTrace, SystemState, TraceRouteDecision, TraceStep
+from core.models import (
+    AgentProposal,
+    Event,
+    OrchestrationTrace,
+    SystemState,
+    TraceRouteDecision,
+    TraceStep,
+)
 from core.runtime_tracking import new_run_id
 from core.state import recompute_kpis, utc_now
 from langgraph.graph import END, START, StateGraph
-from orchestrator.router import route_after_critic, route_after_planner, route_after_risk
+from orchestrator.router import (
+    route_after_critic,
+    route_after_planner,
+    route_after_risk,
+)
 
 
 class OrchestrationState(TypedDict):
@@ -52,12 +63,16 @@ class LangGraphControlTower:
             event=event.model_copy(deep=True) if event else None,
         )
 
-    def _base_input_snapshot(self, state: SystemState, event: Event | None) -> dict[str, object]:
+    def _base_input_snapshot(
+        self, state: SystemState, event: Event | None
+    ) -> dict[str, object]:
         return {
             "mode": state.mode.value,
             "active_event_count": len(state.active_events),
             "candidate_action_count": len(state.candidate_actions),
-            "pending_plan_id": state.pending_plan.plan_id if state.pending_plan else None,
+            "pending_plan_id": state.pending_plan.plan_id
+            if state.pending_plan
+            else None,
             "event_type": event.type.value if event else None,
             "event_severity": event.severity if event else None,
         }
@@ -107,7 +122,9 @@ class LangGraphControlTower:
             step.completed_at = utc_now()
             step.status = "completed"
             step.duration_ms = round(
-                max((step.completed_at - step.started_at).total_seconds() * 1000.0, 0.0),
+                max(
+                    (step.completed_at - step.started_at).total_seconds() * 1000.0, 0.0
+                ),
                 2,
             )
             step.summary = summary
@@ -124,9 +141,18 @@ class LangGraphControlTower:
             step.output_snapshot = output_snapshot or {}
             return
 
-    def _complete_agent_step(self, state: SystemState, node_key: str, output: AgentProposal) -> None:
-        summary = output.domain_summary or output.notes_for_planner or "; ".join(output.observations[:2]) or "node executed"
-        reasoning_source = "ai_assisted_reasoning" if output.llm_used else "deterministic_or_fallback"
+    def _complete_agent_step(
+        self, state: SystemState, node_key: str, output: AgentProposal
+    ) -> None:
+        summary = (
+            output.domain_summary
+            or output.notes_for_planner
+            or "; ".join(output.observations[:2])
+            or "node executed"
+        )
+        reasoning_source = (
+            "ai_assisted_reasoning" if output.llm_used else "deterministic_or_fallback"
+        )
         self._complete_step(
             state,
             node_key=node_key,
@@ -145,7 +171,14 @@ class LangGraphControlTower:
             },
         )
 
-    def _record_route(self, state: SystemState, from_node: str, outcome: str, to_node: str, reason: str) -> None:
+    def _record_route(
+        self,
+        state: SystemState,
+        from_node: str,
+        outcome: str,
+        to_node: str,
+        reason: str,
+    ) -> None:
         if state.latest_trace is None:
             return
         state.latest_trace.route_decisions.append(
@@ -162,22 +195,30 @@ class LangGraphControlTower:
             return
         latest_decision = state.decision_logs[-1] if state.decision_logs else None
         state.latest_trace.selected_plan_id = state.latest_plan_id
-        state.latest_trace.selected_strategy = state.latest_plan.strategy_label if state.latest_plan else None
+        state.latest_trace.selected_strategy = (
+            state.latest_plan.strategy_label if state.latest_plan else None
+        )
         state.latest_trace.candidate_count = (
             len(latest_decision.candidate_evaluations) if latest_decision else 0
         )
-        state.latest_trace.decision_id = latest_decision.decision_id if latest_decision else None
-        state.latest_trace.selection_reason = latest_decision.selection_reason if latest_decision else None
+        state.latest_trace.decision_id = (
+            latest_decision.decision_id if latest_decision else None
+        )
+        state.latest_trace.selection_reason = (
+            latest_decision.selection_reason if latest_decision else None
+        )
         state.latest_trace.approval_pending = state.pending_plan is not None
-        state.latest_trace.approval_reason = latest_decision.approval_reason if latest_decision else ""
-        state.latest_trace.critic_summary = latest_decision.critic_summary if latest_decision else None
+        state.latest_trace.approval_reason = (
+            latest_decision.approval_reason if latest_decision else ""
+        )
+        state.latest_trace.critic_summary = (
+            latest_decision.critic_summary if latest_decision else None
+        )
 
     def _risk_route_reason(self, outcome: str) -> str:
         if outcome == "approval":
             return "pending approval already exists or the system is already in approval mode"
-        if outcome == "crisis":
-            return "risk agent escalated the system into crisis mode"
-        return "risk agent kept the system in normal mode"
+        return f"dynamic routing assigned the next agent as {outcome}"
 
     def _critic_route_reason(self, state: SystemState, outcome: str) -> str:
         if outcome == "approval":
@@ -195,7 +236,9 @@ class LangGraphControlTower:
     def _finalize(self, state: SystemState, started_at: float) -> SystemState:
         state.timestamp = utc_now()
         state.kpis = recompute_kpis(state, recovery_speed=state.kpis.recovery_speed)
-        state.kpis.decision_latency_ms = round((time.perf_counter() - started_at) * 1000.0, 2)
+        state.kpis.decision_latency_ms = round(
+            (time.perf_counter() - started_at) * 1000.0, 2
+        )
         if state.latest_trace is not None:
             state.latest_trace.completed_at = state.timestamp
             state.latest_trace.mode_after = state.mode.value
@@ -209,7 +252,9 @@ class LangGraphControlTower:
         self._begin_trace(state, event)
         self._start_step(state, "risk", "agent", event)
         if event is not None:
-            if event.dedupe_key not in {item.dedupe_key for item in state.active_events}:
+            if event.dedupe_key not in {
+                item.dedupe_key for item in state.active_events
+            }:
                 state.active_events.append(event)
         output = self.risk_agent.run(state, event)
         self._record_output(state, output)
@@ -219,11 +264,11 @@ class LangGraphControlTower:
             state,
             "risk",
             risk_route,
-            "approval" if risk_route == "approval" else "demand",
+            risk_route,
             self._risk_route_reason(risk_route),
         )
         if state.latest_trace is not None:
-            state.latest_trace.current_branch = "crisis" if risk_route == "crisis" else risk_route
+            state.latest_trace.current_branch = state.mode.value
         return {"state": state, "event": event, "started_at": graph_state["started_at"]}
 
     def demand_node(self, graph_state: OrchestrationState) -> OrchestrationState:
@@ -268,8 +313,12 @@ class LangGraphControlTower:
         self._complete_step(
             state,
             node_key="planner",
-            summary=output.notes_for_planner or output.domain_summary or "planner generated candidate plans",
-            reasoning_source="ai_assisted_reasoning" if output.llm_used else "deterministic_or_fallback",
+            summary=output.notes_for_planner
+            or output.domain_summary
+            or "planner generated candidate plans",
+            reasoning_source="ai_assisted_reasoning"
+            if output.llm_used
+            else "deterministic_or_fallback",
             observations=output.observations,
             risks=output.risks,
             downstream_impacts=output.downstream_impacts,
@@ -279,13 +328,27 @@ class LangGraphControlTower:
             llm_error=output.llm_error,
             output_snapshot={
                 "selected_plan_id": state.latest_plan_id,
-                "selected_strategy": state.latest_plan.strategy_label if state.latest_plan else None,
-                "generated_by": state.latest_plan.generated_by if state.latest_plan else None,
-                "candidate_count": len(latest_decision.candidate_evaluations) if latest_decision else 0,
-                "approval_required": state.latest_plan.approval_required if state.latest_plan else False,
+                "selected_strategy": state.latest_plan.strategy_label
+                if state.latest_plan
+                else None,
+                "generated_by": state.latest_plan.generated_by
+                if state.latest_plan
+                else None,
+                "candidate_count": len(latest_decision.candidate_evaluations)
+                if latest_decision
+                else 0,
+                "approval_required": state.latest_plan.approval_required
+                if state.latest_plan
+                else False,
             },
         )
-        self._record_route(state, "planner", "critic", "critic", "planner always forwards candidate plans to the critic")
+        self._record_route(
+            state,
+            "planner",
+            "critic",
+            "critic",
+            "planner always forwards candidate plans to the critic",
+        )
         return graph_state
 
     def critic_node(self, graph_state: OrchestrationState) -> OrchestrationState:
@@ -296,8 +359,12 @@ class LangGraphControlTower:
         self._complete_step(
             state,
             node_key="critic",
-            summary=output.domain_summary or output.notes_for_planner or "critic reviewed the selected plan",
-            reasoning_source="ai_assisted_reasoning" if output.llm_used else "deterministic_or_fallback",
+            summary=output.domain_summary
+            or output.notes_for_planner
+            or "critic reviewed the selected plan",
+            reasoning_source="ai_assisted_reasoning"
+            if output.llm_used
+            else "deterministic_or_fallback",
             observations=output.observations,
             risks=output.risks,
             downstream_impacts=output.downstream_impacts,
@@ -306,8 +373,12 @@ class LangGraphControlTower:
             llm_used=output.llm_used,
             llm_error=output.llm_error,
             output_snapshot={
-                "critic_summary": state.decision_logs[-1].critic_summary if state.decision_logs else None,
-                "finding_count": len(state.decision_logs[-1].critic_findings) if state.decision_logs else 0,
+                "critic_summary": state.decision_logs[-1].critic_summary
+                if state.decision_logs
+                else None,
+                "finding_count": len(state.decision_logs[-1].critic_findings)
+                if state.decision_logs
+                else 0,
             },
         )
         critic_route = route_after_critic({"state": state})
@@ -332,16 +403,26 @@ class LangGraphControlTower:
         self._complete_step(
             state,
             node_key="approval",
-            summary=state.latest_plan.approval_reason if state.latest_plan else "approval required",
+            summary=state.latest_plan.approval_reason
+            if state.latest_plan
+            else "approval required",
             reasoning_source="deterministic_policy_guardrail",
             output_snapshot={
-                "decision_id": state.decision_logs[-1].decision_id if state.decision_logs else None,
+                "decision_id": state.decision_logs[-1].decision_id
+                if state.decision_logs
+                else None,
                 "approval_required": True,
-                "approval_status": state.decision_logs[-1].approval_status.value if state.decision_logs else None,
+                "approval_status": state.decision_logs[-1].approval_status.value
+                if state.decision_logs
+                else None,
             },
         )
         state = self._finalize(state, graph_state["started_at"])
-        return {"state": state, "event": graph_state["event"], "started_at": graph_state["started_at"]}
+        return {
+            "state": state,
+            "event": graph_state["event"],
+            "started_at": graph_state["started_at"],
+        }
 
     def execution_node(self, graph_state: OrchestrationState) -> OrchestrationState:
         state = graph_state["state"]
@@ -396,15 +477,17 @@ class LangGraphControlTower:
             "risk",
             route_after_risk,
             {
-                "normal": "demand",
-                "crisis": "demand",
+                "logistics": "logistics",
+                "supplier": "supplier",
+                "demand": "demand",
+                "planner": "planner",
                 "approval": "approval",
             },
         )
+        graph.add_edge("logistics", "supplier")
+        graph.add_edge("supplier", "planner")
         graph.add_edge("demand", "inventory")
-        graph.add_edge("inventory", "supplier")
-        graph.add_edge("supplier", "logistics")
-        graph.add_edge("logistics", "planner")
+        graph.add_edge("inventory", "planner")
         graph.add_conditional_edges(
             "planner",
             route_after_planner,
@@ -424,7 +507,9 @@ class LangGraphControlTower:
         graph.add_edge("execution", END)
         return graph.compile()
 
-    def invoke(self, state: SystemState, event: Event | None = None, run_id: str | None = None) -> SystemState:
+    def invoke(
+        self, state: SystemState, event: Event | None = None, run_id: str | None = None
+    ) -> SystemState:
         state.run_id = run_id or new_run_id()
         result = self.graph.invoke(
             {

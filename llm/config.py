@@ -84,6 +84,7 @@ class LLMSettings:
     dispatch_mode: str
     vertex_project_id: str | None
     vertex_region: str
+    agent_models: dict[str, str]
 
 
 def load_settings() -> LLMSettings:
@@ -107,6 +108,22 @@ def load_settings() -> LLMSettings:
         timeout_s = float(timeout_raw)
     except ValueError:
         timeout_s = 4.0
+
+    agents = [
+        "risk",
+        "demand",
+        "inventory",
+        "supplier",
+        "logistics",
+        "planner",
+        "critic",
+    ]
+    agent_models = {}
+    for agent in agents:
+        model_env = os.getenv(f"CHAINCOPILOT_{agent.upper()}_LLM_MODEL")
+        if model_env:
+            agent_models[agent] = model_env.strip()
+
     return LLMSettings(
         enabled=_env_flag("CHAINCOPILOT_LLM_ENABLED", default=False),
         provider=provider,
@@ -118,4 +135,5 @@ def load_settings() -> LLMSettings:
         dispatch_mode=_dispatch_mode(),
         vertex_project_id=vertex_project_id,
         vertex_region=vertex_region or "global",
+        agent_models=agent_models,
     )

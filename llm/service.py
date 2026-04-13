@@ -186,6 +186,7 @@ def _call_json_model(
             response = client.generate_json(
                 prompt=prompt,
                 schema=schema,
+                model_override=model_override,
             )
         except (GeminiClientError, VertexClientError) as exc:
             last_error = str(exc)
@@ -753,7 +754,9 @@ def enrich_plan_and_decision(
         decision_log.llm_error = f"unsupported provider: {settings.provider}"
         return
 
-    prompt = _build_prompt(state=state, event=event, plan=plan, decision_log=decision_log)
+    prompt = _build_prompt(
+        state=state, event=event, plan=plan, decision_log=decision_log
+    )
     try:
         logger.info(
             "llm capability=enrichment call start provider=%s model=%s",
@@ -763,6 +766,7 @@ def enrich_plan_and_decision(
         response = client.generate_json(
             prompt=prompt,
             schema=ENRICHMENT_SCHEMA,
+            model_override=model_override,
         )
     except (GeminiClientError, VertexClientError) as exc:
         logger.warning(
