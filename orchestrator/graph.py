@@ -25,9 +25,13 @@ from core.runtime_tracking import new_run_id
 from core.state import recompute_kpis, utc_now
 from langgraph.graph import END, START, StateGraph
 from orchestrator.router import (
+    route_after_demand,
+    route_after_inventory,
+    route_after_logistics,
     route_after_critic,
     route_after_planner,
     route_after_risk,
+    route_after_supplier,
 )
 
 
@@ -229,6 +233,17 @@ class LangGraphControlTower:
             )
         return "selected plan cleared deterministic approval guardrails and can execute"
 
+    def _handoff_reason(self, from_node: str, to_node: str) -> str:
+        reasons = {
+            ("demand", "inventory"): "demand analysis updates forecast and hands replenishment to inventory planning",
+            ("inventory", "planner"): "inventory planning completed and handed feasible replenishment options to the planner",
+            ("supplier", "logistics"): "supplier mitigation options were prepared and routing alternatives are needed before final planning",
+            ("supplier", "planner"): "supplier review completed and the planner can evaluate the candidate actions",
+            ("logistics", "supplier"): "routing disruption analysis completed and supplier mitigation is needed before planning",
+            ("logistics", "planner"): "routing analysis completed and the planner can score the candidate actions",
+        }
+        return reasons.get((from_node, to_node), f"{from_node} forwarded the workflow to {to_node}")
+
     def _record_output(self, state: SystemState, output) -> None:
         state.agent_outputs[output.agent] = output
         state.candidate_actions.extend(output.proposals)
@@ -277,6 +292,14 @@ class LangGraphControlTower:
         output = self.demand_agent.run(state, graph_state["event"])
         self._record_output(state, output)
         self._complete_agent_step(state, "demand", output)
+        next_node = route_after_demand({"state": state})
+        self._record_route(
+            state,
+            "demand",
+            next_node,
+            next_node,
+            self._handoff_reason("demand", next_node),
+        )
         return graph_state
 
     def inventory_node(self, graph_state: OrchestrationState) -> OrchestrationState:
@@ -285,6 +308,14 @@ class LangGraphControlTower:
         output = self.inventory_agent.run(state, graph_state["event"])
         self._record_output(state, output)
         self._complete_agent_step(state, "inventory", output)
+        next_node = route_after_inventory({"state": state})
+        self._record_route(
+            state,
+            "inventory",
+            next_node,
+            next_node,
+            self._handoff_reason("inventory", next_node),
+        )
         return graph_state
 
     def supplier_node(self, graph_state: OrchestrationState) -> OrchestrationState:
@@ -293,6 +324,14 @@ class LangGraphControlTower:
         output = self.supplier_agent.run(state, graph_state["event"])
         self._record_output(state, output)
         self._complete_agent_step(state, "supplier", output)
+        next_node = route_after_supplier({"state": state})
+        self._record_route(
+            state,
+            "supplier",
+            next_node,
+            next_node,
+            self._handoff_reason("supplier", next_node),
+        )
         return graph_state
 
     def logistics_node(self, graph_state: OrchestrationState) -> OrchestrationState:
@@ -301,6 +340,14 @@ class LangGraphControlTower:
         output = self.logistics_agent.run(state, graph_state["event"])
         self._record_output(state, output)
         self._complete_agent_step(state, "logistics", output)
+        next_node = route_after_logistics({"state": state})
+        self._record_route(
+            state,
+            "logistics",
+            next_node,
+            next_node,
+            self._handoff_reason("logistics", next_node),
+        )
         return graph_state
 
     def planner_node(self, graph_state: OrchestrationState) -> OrchestrationState:
@@ -484,10 +531,36 @@ class LangGraphControlTower:
                 "approval": "approval",
             },
         )
-        graph.add_edge("logistics", "supplier")
-        graph.add_edge("supplier", "planner")
-        graph.add_edge("demand", "inventory")
-        graph.add_edge("inventory", "planner")
+        graph.add_conditional_edges(
+            "logistics",
+            route_after_logistics,
+            {
+                "supplier": "supplier",
+                "planner": "planner",
+            },
+        )
+        graph.add_conditional_edges(
+            "supplier",
+            route_after_supplier,
+            {
+                "logistics": "logistics",
+                "planner": "planner",
+            },
+        )
+        graph.add_conditional_edges(
+            "demand",
+            route_after_demand,
+            {
+                "inventory": "inventory",
+            },
+        )
+        graph.add_conditional_edges(
+            "inventory",
+            route_after_inventory,
+            {
+                "planner": "planner",
+            },
+        )
         graph.add_conditional_edges(
             "planner",
             route_after_planner,

@@ -186,7 +186,6 @@ def _call_json_model(
             response = client.generate_json(
                 prompt=prompt,
                 schema=schema,
-                model_override=model_override,
             )
         except (GeminiClientError, VertexClientError) as exc:
             last_error = str(exc)
@@ -339,6 +338,7 @@ def _build_specialist_prompt(
     event: Event | None,
     proposal: AgentProposal,
     state_slice: dict[str, Any],
+    custom_prompt: str | None = None,
 ) -> str:
     context = {
         "agent": agent_name,
@@ -351,9 +351,11 @@ def _build_specialist_prompt(
         "current_risks": proposal.risks,
         "candidate_actions": _action_catalog(proposal.proposals),
     }
-    instructions = "\n\n".join(
+    instruction_parts = [SPECIALIST_AGENT_PROMPT.format(agent_name=agent_name)]
+    if custom_prompt:
+        instruction_parts.append(custom_prompt.strip())
+    instruction_parts.extend(
         [
-            SPECIALIST_AGENT_PROMPT.format(agent_name=agent_name),
             SPECIALIST_REASONING_PROMPT.strip(),
             (
                 "Return JSON with keys domain_summary, downstream_impacts, "
@@ -363,6 +365,7 @@ def _build_specialist_prompt(
             ),
         ]
     )
+    instructions = "\n\n".join(instruction_parts)
     return f"{instructions}\n\nContext:\n{json.dumps(context, ensure_ascii=True, indent=2)}"
 
 
@@ -502,6 +505,7 @@ def enrich_specialist_proposal(
     event: Event | None,
     proposal: AgentProposal,
     state_slice: dict[str, Any],
+    custom_prompt: str | None = None,
 ) -> None:
     prompt = _build_specialist_prompt(
         agent_name=agent_name,
@@ -509,6 +513,7 @@ def enrich_specialist_proposal(
         event=event,
         proposal=proposal,
         state_slice=state_slice,
+        custom_prompt=custom_prompt,
     )
     response, provider, error = _call_json_model(
         prompt=prompt,
@@ -766,7 +771,6 @@ def enrich_plan_and_decision(
         response = client.generate_json(
             prompt=prompt,
             schema=ENRICHMENT_SCHEMA,
-            model_override=model_override,
         )
     except (GeminiClientError, VertexClientError) as exc:
         logger.warning(
