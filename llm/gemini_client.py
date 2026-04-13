@@ -20,13 +20,15 @@ class GeminiClient:
         prompt: str,
         schema: dict,
         temperature: float = 0.2,
+        model_override: str | None = None,
     ) -> dict:
         if not self.settings.api_key:
             raise GeminiClientError("missing Gemini API key")
 
+        model_to_use = model_override if model_override else self.settings.model
         endpoint = (
             "https://generativelanguage.googleapis.com/v1beta/models/"
-            f"{self.settings.model}:generateContent"
+            f"{model_to_use}:generateContent"
         )
         payload = {
             "contents": [
@@ -55,7 +57,9 @@ class GeminiClient:
             method="POST",
         )
         try:
-            with request.urlopen(http_request, timeout=self.settings.timeout_s) as response:
+            with request.urlopen(
+                http_request, timeout=self.settings.timeout_s
+            ) as response:
                 raw = json.loads(response.read().decode("utf-8"))
         except error.HTTPError as exc:
             detail = exc.read().decode("utf-8", errors="ignore")

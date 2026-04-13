@@ -4,6 +4,9 @@ import os
 from dataclasses import dataclass
 
 from core.runtime_records import DispatchMode
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def _env_flag(name: str, default: bool = False) -> bool:
@@ -31,7 +34,11 @@ def _planner_mode() -> str:
 
 
 def _dispatch_mode() -> str:
-    value = os.getenv("CHAINCOPILOT_DISPATCH_MODE", DispatchMode.SIMULATION.value).strip().lower()
+    value = (
+        os.getenv("CHAINCOPILOT_DISPATCH_MODE", DispatchMode.SIMULATION.value)
+        .strip()
+        .lower()
+    )
     if value == DispatchMode.SIMULATION.value:
         return value
     return DispatchMode.SIMULATION.value
@@ -47,6 +54,7 @@ class LLMSettings:
     retry_attempts: int
     planner_mode: str
     dispatch_mode: str
+    agent_models: dict[str, str]
 
 
 def load_settings() -> LLMSettings:
@@ -56,6 +64,22 @@ def load_settings() -> LLMSettings:
         timeout_s = float(timeout_raw)
     except ValueError:
         timeout_s = 4.0
+
+    agents = [
+        "risk",
+        "demand",
+        "inventory",
+        "supplier",
+        "logistics",
+        "planner",
+        "critic",
+    ]
+    agent_models = {}
+    for agent in agents:
+        model_env = os.getenv(f"CHAINCOPILOT_{agent.upper()}_LLM_MODEL")
+        if model_env:
+            agent_models[agent] = model_env.strip()
+
     return LLMSettings(
         enabled=_env_flag("CHAINCOPILOT_LLM_ENABLED", default=False),
         provider=os.getenv("CHAINCOPILOT_LLM_PROVIDER", "gemini").strip().lower(),
@@ -65,4 +89,5 @@ def load_settings() -> LLMSettings:
         retry_attempts=max(_env_int("CHAINCOPILOT_LLM_RETRY_ATTEMPTS", 1), 1),
         planner_mode=_planner_mode(),
         dispatch_mode=_dispatch_mode(),
+        agent_models=agent_models,
     )

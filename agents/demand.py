@@ -11,6 +11,11 @@ from core.models import Action, AgentProposal, Event, SystemState
 
 class DemandAgent(BaseAgent):
     name = "demand"
+    custom_system_prompt = """You are the Demand Agent for a supply chain management system.
+Your role is to analyze demand spikes, historical demand patterns, and forecast future demand.
+When a disruption or event occurs (like a DEMAND_SPIKE), you evaluate how it impacts the required inventory levels.
+Provide a concise, professional summary (under 4 sentences) of your demand analysis, the specific SKU affected, and your recommendations.
+Write the summary entirely in English. Do NOT use markdown formatting or bullet points in the summary."""
 
     def run(self, state: SystemState, event: Event | None = None) -> AgentProposal:
         proposal = AgentProposal(agent=self.name)

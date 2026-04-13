@@ -7,6 +7,7 @@ from core.models import AgentProposal, Event, SystemState
 
 class BaseAgent(ABC):
     name: str
+    custom_system_prompt: str | None = None
 
     @abstractmethod
     def run(self, state: SystemState, event: Event | None = None) -> AgentProposal:
@@ -28,5 +29,6 @@ class BaseAgent(ABC):
             event=event,
             proposal=proposal,
             state_slice=state_slice,
+            custom_prompt=self.custom_system_prompt,
         )
         return proposal

@@ -9,6 +9,10 @@ from core.models import Action, AgentProposal, Event, SystemState
 
 class SupplierAgent(BaseAgent):
     name = "supplier"
+    custom_system_prompt = """You are the Supplier Management Agent for a supply chain system.
+When supplier delays or disruptions occur, your job is to analyze alternative suppliers, factoring in reliability, cost, and lead times.
+Provide a concise, professional summary (under 4 sentences) of the supplier issues, your evaluation of the alternatives, and the recommended supplier switch.
+Write the summary entirely in English. Do NOT use markdown formatting or bullet points in the summary."""
 
     def run(self, state: SystemState, event: Event | None = None) -> AgentProposal:
         proposal = AgentProposal(agent=self.name)

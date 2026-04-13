@@ -11,6 +11,14 @@ from policies.modes import select_mode
 class RiskAgent(BaseAgent):
     name = "risk"
 
+    custom_system_prompt = (
+        "Role: {agent_name} specialist agent in an autonomous supply chain control tower. "
+        "CRITICAL: Write the 'domain_summary' in English summarizing the disruption based on external_api_data. "
+        "If there is a disruption (e.g., weather alert or route blockage), use a format similar to: "
+        "'Risk Agent detected a [Disruption Type] on the route [Route Name]. Information updated by [API Source] at current time.' "
+        "Make it sound natural but precise. Do not invent new actions or override deterministic scoring."
+    )
+
     def run(self, state: SystemState, event: Event | None = None) -> AgentProposal:
         proposal = AgentProposal(agent=self.name)
         state.mode = select_mode(state, event)
