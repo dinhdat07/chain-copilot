@@ -126,6 +126,19 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
                 "id": 1581130,
                 "name": "Hanoi",
                 "cod": 200,
+                "alerts": [
+                    {
+                        "sender_name": "National Hydro-Meteorological Service",
+                        "event": "Severe Flooding",
+                        "start": 1661870592,
+                        "end": 1661956992,
+                        "description": "Expect heavy localized flooding. Avoid low-lying areas.",
+                        "affected_zones": [
+                            {"lat": 20.938611, "lng": 106.314444, "radius_km": 15},
+                            {"lat": 20.850000, "lng": 106.450000, "radius_km": 10},
+                        ],
+                    }
+                ],
             }
         return {
             "coord": {"lon": 105.8412, "lat": 21.0245},
@@ -188,6 +201,20 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
                         ],
                         "status": "Blocked",
                         "closure_probability": 0.95,
+                        "incidents": [
+                            {
+                                "incident_id": "INC_001",
+                                "type": "ROAD_CLOSED",
+                                "description": "Lane submerged due to heavy flood",
+                                "location": {"lat": 20.938611, "lng": 106.314444},
+                            },
+                            {
+                                "incident_id": "INC_002",
+                                "type": "ROAD_CLOSED",
+                                "description": "Traffic accident associated with weather",
+                                "location": {"lat": 20.942150, "lng": 106.321890},
+                            },
+                        ],
                     }
                 ],
                 "status": "OK",
