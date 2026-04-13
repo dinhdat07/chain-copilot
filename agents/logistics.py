@@ -7,6 +7,10 @@ from core.models import Action, AgentProposal, Event, SystemState
 
 class LogisticsAgent(BaseAgent):
     name = "logistics"
+    custom_system_prompt = """You are the Logistics and Routing Agent for a supply chain system.
+When transportation routes are blocked or delayed, your responsibility is to find alternative shipping routes that minimize risk, transit time, and cost.
+Provide a concise, professional summary (under 4 sentences) of the routing issues, your analysis of alternative routes, and your specific rerouting recommendations.
+Write the summary entirely in English. Do NOT use markdown formatting or bullet points in the summary."""
 
     def run(self, state: SystemState, event: Event | None = None) -> AgentProposal:
         proposal = AgentProposal(agent=self.name)

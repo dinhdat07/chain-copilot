@@ -34,4 +34,5 @@ if __name__ == "__main__":
         port=int(os.getenv("CHAINCOPILOT_API_PORT", "8000")),
         reload=True,
         reload_dirs=build_reload_dirs(),
+        env_file=".env",
     )
