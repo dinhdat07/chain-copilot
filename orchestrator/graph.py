@@ -387,6 +387,42 @@ class LangGraphControlTower:
                 "approval_required": state.latest_plan.approval_required
                 if state.latest_plan
                 else False,
+                "simulation_horizon_days": (
+                    latest_decision.candidate_evaluations[0].simulation_horizon_days
+                    if latest_decision and latest_decision.candidate_evaluations
+                    else 0
+                ),
+                "projection_summary": (
+                    next(
+                        (
+                            item.projection_summary
+                            for item in latest_decision.candidate_evaluations
+                            if item.strategy_label == state.latest_plan.strategy_label
+                        ),
+                        "",
+                    )
+                    if latest_decision and state.latest_plan
+                    else ""
+                ),
+                "projection_steps": (
+                    [
+                        {
+                            "label": step.label,
+                            "service_level": step.kpis.service_level,
+                            "disruption_risk": step.kpis.disruption_risk,
+                            "recovery_speed": step.kpis.recovery_speed,
+                            "inventory_at_risk": step.inventory_at_risk,
+                            "inventory_out_of_stock": step.inventory_out_of_stock,
+                            "backlog_units": step.backlog_units,
+                            "summary": step.summary,
+                        }
+                        for item in latest_decision.candidate_evaluations
+                        if state.latest_plan and item.strategy_label == state.latest_plan.strategy_label
+                        for step in item.projection_steps
+                    ]
+                    if latest_decision and state.latest_plan
+                    else []
+                ),
             },
         )
         self._record_route(

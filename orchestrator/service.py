@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid4
 
-from actions.executor import simulate_actions
 from core.enums import ActionType, ApprovalStatus, Mode, PlanStatus
 from core.memory import SQLiteStore
 from core.models import (
@@ -26,6 +25,7 @@ from policies.explainability import (
 )
 from policies.guardrails import approval_required
 from policies.scoring import compute_score
+from simulation.evaluator import evaluate_candidate_plan
 from simulation.learning import finalize_latest_scenario_run
 
 
@@ -181,12 +181,16 @@ def _build_safer_plan(state: SystemState, decision_log: DecisionLog) -> Plan:
         ]
     selected_actions = sorted(feasible_candidates, key=_safer_action_key)[:1]
     target_mode = _mode_from_state(state)
-    simulated = simulate_actions(state, selected_actions)
+    projection = evaluate_candidate_plan(
+        state=state,
+        event=_latest_event(state),
+        actions=selected_actions,
+    )
     score, breakdown = compute_score(
-        service_level=simulated.kpis.service_level,
-        total_cost=simulated.kpis.total_cost,
-        disruption_risk=simulated.kpis.disruption_risk,
-        recovery_speed=simulated.kpis.recovery_speed,
+        service_level=projection.worst_case_kpis.service_level,
+        total_cost=projection.projected_kpis.total_cost,
+        disruption_risk=projection.worst_case_kpis.disruption_risk,
+        recovery_speed=projection.projected_kpis.recovery_speed,
         mode=target_mode,
         baseline_cost=decision_log.before_kpis.total_cost,
     )
@@ -199,7 +203,17 @@ def _build_safer_plan(state: SystemState, decision_log: DecisionLog) -> Plan:
         score_breakdown=breakdown,
         strategy_label="safer_alternative",
         generated_by="operator_safer_request",
-        planner_reasoning=build_plan_summary(decision_log.before_kpis, simulated.kpis, breakdown),
+        planner_reasoning=build_plan_summary(
+            decision_log.before_kpis,
+            projection.projected_kpis,
+            breakdown,
+            selected_actions=selected_actions,
+            strategy_label="safer_alternative",
+            mode=target_mode,
+            projection_summary=projection.projection_summary,
+            simulation_horizon_days=projection.simulation_horizon_days,
+            worst_case_kpis=projection.worst_case_kpis,
+        ),
         status=PlanStatus.PROPOSED,
     )
     soft_violations = evaluate_soft_constraints(plan, state)
@@ -208,7 +222,12 @@ def _build_safer_plan(state: SystemState, decision_log: DecisionLog) -> Plan:
     if soft_violations:
         plan.mode_rationale = "Soft constraints warnings: " + "; ".join(v.message for v in soft_violations)
         
-    needs_approval, reason = approval_required(plan, decision_log.before_kpis, simulated.kpis, _latest_event(state))
+    needs_approval, reason = approval_required(
+        plan,
+        decision_log.before_kpis,
+        projection.projected_kpis,
+        _latest_event(state),
+    )
     plan.approval_required = needs_approval
     plan.approval_reason = reason
     return plan
@@ -226,12 +245,16 @@ def _build_alternative_plan(
         raise ValueError("selected alternative has no executable actions")
 
     target_mode = _mode_from_state(state)
-    simulated = simulate_actions(state, actions)
+    projection = evaluate_candidate_plan(
+        state=state,
+        event=_latest_event(state),
+        actions=actions,
+    )
     score, breakdown = compute_score(
-        service_level=simulated.kpis.service_level,
-        total_cost=simulated.kpis.total_cost,
-        disruption_risk=simulated.kpis.disruption_risk,
-        recovery_speed=simulated.kpis.recovery_speed,
+        service_level=projection.worst_case_kpis.service_level,
+        total_cost=projection.projected_kpis.total_cost,
+        disruption_risk=projection.worst_case_kpis.disruption_risk,
+        recovery_speed=projection.projected_kpis.recovery_speed,
         mode=target_mode,
         baseline_cost=decision_log.before_kpis.total_cost,
     )
@@ -248,12 +271,15 @@ def _build_alternative_plan(
         planner_reasoning=evaluation.rationale
         or build_plan_summary(
             decision_log.before_kpis,
-            simulated.kpis,
+            projection.projected_kpis,
             breakdown,
             selected_actions=actions,
             strategy_label=evaluation.strategy_label,
             mode=target_mode,
             mode_rationale=evaluation.mode_rationale,
+            projection_summary=evaluation.projection_summary,
+            simulation_horizon_days=evaluation.simulation_horizon_days,
+            worst_case_kpis=evaluation.worst_case_kpis,
         ),
         status=PlanStatus.PROPOSED,
         feasible=evaluation.feasible,
@@ -270,7 +296,7 @@ def _build_alternative_plan(
     needs_approval, reason = approval_required(
         plan,
         decision_log.before_kpis,
-        simulated.kpis,
+        projection.projected_kpis,
         _latest_event(state),
     )
     plan.approval_required = True
@@ -373,11 +399,15 @@ def request_safer_plan(
         safer_plan.approval_reason,
         "operator requested a safer alternative; manual approval is required before dispatch",
     )
-    simulated = simulate_actions(state, safer_plan.actions)
+    safer_projection = evaluate_candidate_plan(
+        state=state,
+        event=_latest_event(state),
+        actions=safer_plan.actions,
+    )
     winning_factors = build_winning_factors(
         safer_plan.actions,
         previous_decision.before_kpis,
-        simulated.kpis,
+        safer_projection.projected_kpis,
         safer_plan.score_breakdown,
     )
     rejection_reasons = explain_rejected_actions(previous_plan_actions, safer_plan.actions, 1)
@@ -386,7 +416,7 @@ def request_safer_plan(
         plan_id=safer_plan.plan_id,
         event_ids=safer_plan.trigger_event_ids,
         before_kpis=previous_decision.before_kpis.model_copy(deep=True),
-        after_kpis=simulated.kpis,
+        after_kpis=safer_projection.projected_kpis,
         selected_actions=[action.action_id for action in safer_plan.actions],
         rejected_actions=rejection_reasons,
         score_breakdown=safer_plan.score_breakdown,
@@ -467,11 +497,15 @@ def select_pending_alternative_plan(
         decision_log=previous_decision,
         evaluation=evaluation,
     )
-    simulated = simulate_actions(state, alternative_plan.actions)
+    alternative_projection = evaluate_candidate_plan(
+        state=state,
+        event=_latest_event(state),
+        actions=alternative_plan.actions,
+    )
     winning_factors = build_winning_factors(
         alternative_plan.actions,
         previous_decision.before_kpis,
-        simulated.kpis,
+        alternative_projection.projected_kpis,
         alternative_plan.score_breakdown,
     )
     rejection_reasons = explain_rejected_actions(
@@ -488,7 +522,7 @@ def select_pending_alternative_plan(
         plan_id=alternative_plan.plan_id,
         event_ids=alternative_plan.trigger_event_ids,
         before_kpis=previous_decision.before_kpis.model_copy(deep=True),
-        after_kpis=simulated.kpis,
+        after_kpis=alternative_projection.projected_kpis,
         selected_actions=[action.action_id for action in alternative_plan.actions],
         rejected_actions=rejection_reasons,
         score_breakdown=alternative_plan.score_breakdown,
