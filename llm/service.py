@@ -20,6 +20,7 @@ from core.models import (
 from llm.config import load_settings
 from llm.gemini_client import GeminiClient, GeminiClientError
 from llm.vertex_client import VertexClientError, VertexGeminiClient
+from llm.fpt_client import FPTClient, FPTClientError
 from orchestrator.prompts import (
     DECISION_EXPLANATION_PROMPT,
     AI_CANDIDATE_PLANNER_PROMPT,
@@ -40,6 +41,8 @@ def _provider_client(settings):
         return GeminiClient(settings)
     if settings.provider == "vertex":
         return VertexGeminiClient(settings)
+    if settings.provider == "fpt":
+        return FPTClient(settings)
     return None
 
 
@@ -187,7 +190,7 @@ def _call_json_model(
                 prompt=prompt,
                 schema=schema,
             )
-        except (GeminiClientError, VertexClientError) as exc:
+        except (GeminiClientError, VertexClientError, FPTClientError) as exc:
             last_error = str(exc)
             logger.warning(
                 "llm capability=%s call failed attempt=%s/%s error=%s",
@@ -776,7 +779,7 @@ def enrich_plan_and_decision(
             prompt=prompt,
             schema=ENRICHMENT_SCHEMA,
         )
-    except (GeminiClientError, VertexClientError) as exc:
+    except (GeminiClientError, VertexClientError, FPTClientError) as exc:
         logger.warning(
             "llm capability=enrichment call failed provider=%s model=%s error=%s",
             settings.provider,
