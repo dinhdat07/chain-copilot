@@ -1,5 +1,5 @@
 warehouse_id,name,capacity,region
-WH_NORTH,North Hub,1600,north
-WH_SOUTH,South Hub,3200,south
-WH_EAST,East Distribution Hub,3600,east
-WH_WEST,West Distribution Hub,2600,west
+WH_NORTH,North Hub,2400,north
+WH_SOUTH,South Hub,4200,south
+WH_EAST,East Distribution Hub,5200,east
+WH_WEST,West Distribution Hub,3000,west

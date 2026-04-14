@@ -17,9 +17,9 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def make_idempotency_key(plan_id: str, action_id: str, approval_timestamp: str) -> str:
-    """Deterministic key — safe to retry as many times as needed."""
-    raw = f"{plan_id}:{action_id}:{approval_timestamp}"
+def make_idempotency_key(plan_id: str, action_id: str, dispatch_scope: str) -> str:
+    """Deterministic key for a plan/action within one dispatch scope."""
+    raw = f"{plan_id}:{action_id}:{dispatch_scope}"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
@@ -49,6 +49,7 @@ class ExecutionRecord(BaseModel):
     target_system: str                         # "ERP" | "WMS" | "TMS"
     payload: dict[str, Any] = Field(default_factory=dict)
     idempotency_key: str
+    dispatch_mode: str = "dry_run"
 
     status: ExecutionStatus = ExecutionStatus.PLANNED
     receipt: dict[str, Any] = Field(default_factory=dict)

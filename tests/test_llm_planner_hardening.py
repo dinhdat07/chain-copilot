@@ -156,6 +156,59 @@ def test_partial_planner_output_is_repaired_not_fully_fallback(monkeypatch) -> N
     assert result.latest_plan is not None
     assert result.latest_plan.generated_by == "llm_planner_repaired"
     assert len(result.decision_logs[-1].candidate_evaluations) == 3
-    assert "planner returned incomplete or invalid candidate plans" in (
+    assert "planner returned duplicate, incomplete, or invalid candidate plans" in (
         result.decision_logs[-1].planner_error or ""
     )
+
+
+def test_duplicate_candidate_plans_are_repaired_into_distinct_options(monkeypatch) -> None:
+    _enable_llm(monkeypatch)
+
+    def _fake_generate_json(self, *, prompt, schema, temperature=0.2):
+        if "candidate_plans" in schema.get("properties", {}):
+            return {
+                "candidate_plans": [
+                    {
+                        "strategy_label": "cost_first",
+                        "action_ids": ["act_supplier_SKU_001_SUP_B"],
+                        "rationale": "lowest cost move",
+                    },
+                    {
+                        "strategy_label": "balanced",
+                        "action_ids": ["act_supplier_SKU_001_SUP_B"],
+                        "rationale": "balanced option",
+                    },
+                    {
+                        "strategy_label": "resilience_first",
+                        "action_ids": ["act_supplier_SKU_001_SUP_B"],
+                        "rationale": "resilient option",
+                    },
+                ]
+            }
+        if "summary" in schema.get("properties", {}):
+            return {"summary": "critic ok", "findings": []}
+        return {
+            "planner_narrative": "AI narrative",
+            "operator_explanation": "AI operator explanation",
+            "approval_summary": "AI approval summary",
+        }
+
+    monkeypatch.setattr("llm.service.GeminiClient.generate_json", _fake_generate_json)
+    state = load_initial_state()
+    event = _event(
+        EventType.SUPPLIER_DELAY,
+        0.8,
+        {"supplier_id": "SUP_A", "sku": "SKU_001", "delay_hours": 48},
+        ["SUP_A", "SKU_001"],
+    )
+
+    result = build_graph().invoke(state, event)
+    action_sets = {
+        tuple(sorted(item.action_ids))
+        for item in result.decision_logs[-1].candidate_evaluations
+    }
+
+    assert result.latest_plan is not None
+    assert len(action_sets) == 3
+    assert result.latest_plan.generated_by == "llm_planner_repaired"
+    assert "duplicate" in (result.decision_logs[-1].planner_error or "")

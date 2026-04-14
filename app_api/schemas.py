@@ -43,6 +43,10 @@ class ApprovalCommandRequest(BaseModel):
     action: Literal["approve", "reject", "safer_plan"]
 
 
+class ApprovalAlternativeRequest(BaseModel):
+    strategy_label: str
+
+
 class EventIngestRequest(BaseModel):
     event_class: EventClass
     event_type: str
@@ -133,6 +137,9 @@ class CandidateEvaluationView(BaseModel):
     approval_reason: str
     rationale: str
     llm_used: bool = False
+    coverage_fraction: float = 0.0
+    critical_covered: int = 0
+    unresolved_critical: int = 0
 
 
 class PlanView(BaseModel):
@@ -393,6 +400,7 @@ class ExecutionRecordView(BaseModel):
 class ActionExecutionRecordView(BaseModel):
     execution_id: str
     plan_id: str
+    dispatch_mode: str = "dry_run"
     action_id: str
     action_type: str
     target_system: str

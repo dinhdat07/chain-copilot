@@ -11,15 +11,15 @@ def approval_required(
     if plan.mode == Mode.NORMAL:
         return False, ""
     if event and event.severity >= 0.75:
-        return True, "event severity exceeds approval threshold"
+        return True, "Event severity exceeds approval threshold"
     if before_kpis.total_cost > 0:
         cost_increase = (after_kpis.total_cost - before_kpis.total_cost) / before_kpis.total_cost
         if cost_increase > 0.15:
-            return True, "projected cost increase exceeds 15%"
+            return True, "Projected cost increase exceeds 15%"
     if before_kpis.service_level - after_kpis.service_level > 0.03:
-        return True, "projected service level drop exceeds 3 points"
+        return True, "Projected service level drop exceeds 3 points"
     changed_suppliers = sum(1 for action in plan.actions if action.action_type.value == "switch_supplier")
     changed_routes = sum(1 for action in plan.actions if action.action_type.value == "reroute")
     if changed_suppliers and changed_routes:
-        return True, "plan changes supplier and route in the same cycle"
+        return True, "Plan changes supplier and route in the same cycle"
     return False, ""

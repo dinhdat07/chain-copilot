@@ -1,4 +1,8 @@
+from agents.demand import DemandAgent
+from agents.inventory import InventoryAgent
+from app_api.services import inventory_rows
 from core.state import load_initial_state
+from orchestrator.graph import build_graph
 from simulation.scenarios import get_scenario_events
 
 
@@ -46,3 +50,59 @@ def test_seed_scenarios_target_existing_entities() -> None:
                 assert sku in inventory_skus
             if route_id is not None:
                 assert route_id in route_ids
+
+
+def test_seed_inventory_baseline_has_managed_low_stock_pressure() -> None:
+    state = load_initial_state()
+    DemandAgent().run(state, None)
+    InventoryAgent().run(state, None)
+
+    below_reorder = 0
+    below_safety = 0
+    for item in state.inventory.values():
+        projected = item.on_hand + item.incoming_qty - item.forecast_qty
+        below_reorder += projected < item.reorder_point
+        below_safety += projected < item.safety_stock
+
+    assert state.kpis.service_level >= 0.97
+    assert state.kpis.stockout_risk <= 0.03
+    assert 18 <= below_reorder <= 22
+    assert below_safety <= 2
+
+
+def test_inventory_api_status_matches_projected_low_stock_baseline() -> None:
+    state = load_initial_state()
+    DemandAgent().run(state, None)
+    InventoryAgent().run(state, None)
+
+    rows = inventory_rows(state)
+    low_count = sum(row.status in {"low", "out_of_stock"} for row in rows)
+    at_risk_count = sum(row.status == "at_risk" for row in rows)
+
+    assert len(rows) == 50
+    assert 18 <= low_count + at_risk_count <= 22
+    assert low_count >= 18
+
+
+def test_seed_warehouses_are_not_over_capacity_at_baseline() -> None:
+    state = load_initial_state()
+
+    for warehouse_id, warehouse in state.warehouses.items():
+        current_stock = sum(
+            item.on_hand + item.incoming_qty
+            for item in state.inventory.values()
+            if item.warehouse_id == warehouse_id
+        )
+        assert current_stock <= warehouse.capacity
+
+
+def test_demand_spike_scenario_produces_actionable_plan(monkeypatch) -> None:
+    monkeypatch.setenv("CHAINCOPILOT_LLM_ENABLED", "0")
+
+    state = load_initial_state()
+    event = get_scenario_events("demand_spike")[0]
+    result = build_graph().invoke(state, event)
+
+    assert result.latest_plan is not None
+    assert any(action.action_type.value != "no_op" for action in result.latest_plan.actions)
+    assert all(action.action_type.value != "no_op" for action in result.latest_plan.actions)

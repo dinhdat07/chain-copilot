@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 
 from app_api.schemas import (
     ActionExecutionRecordView,
+    ApprovalAlternativeRequest,
     ApprovalCommandResultResponse,
     ApprovalDetailResponse,
     ApprovalCommandRequest,
@@ -391,6 +392,23 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
             runtime.state,
             decision_id=resolved_decision_id,
             action=request.action,
+            execution=runtime.latest_execution(),
+        )
+
+    @router.post(
+        "/approvals/{decision_id}/select-alternative",
+        response_model=ApprovalCommandResultResponse,
+    )
+    def select_approval_alternative(
+        decision_id: str, request: ApprovalAlternativeRequest
+    ) -> ApprovalCommandResultResponse:
+        runtime = runtime_getter()
+        runtime.select_approval_alternative(decision_id, request.strategy_label)
+        resolved_decision_id = runtime.current_decision_id() or decision_id
+        return approval_command_result_view(
+            runtime.state,
+            decision_id=resolved_decision_id,
+            action="select_alternative",
             execution=runtime.latest_execution(),
         )
 

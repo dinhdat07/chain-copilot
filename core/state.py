@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from datetime import datetime, timezone
+import math
 from pathlib import Path
 
 import pandas as pd
@@ -165,6 +167,49 @@ def default_memory(data_dir: Path | None = None) -> MemorySnapshot:
         last_approved_plan_ids=[],
         historical_cases=_load_historical_cases(data_dir),
     )
+
+
+def _approximate_z_score(service_level: float) -> float:
+    p = max(0.5001, min(0.9999, service_level))
+    t = math.sqrt(-2.0 * math.log(1.0 - p))
+    c0, c1, c2 = 2.515517, 0.802853, 0.010328
+    d1, d2, d3 = 1.432788, 0.189269, 0.001308
+    z = t - ((c2 * t + c1) * t + c0) / (((d3 * t + d2) * t + d1) * t + 1.0)
+    return max(0.0, z)
+
+
+def refresh_operational_baseline(state: SystemState) -> SystemState:
+    grouped: dict[str, list[tuple[int, int]]] = defaultdict(list)
+    for demand in state.demands:
+        grouped[demand.sku].append((demand.day_index, demand.quantity))
+
+    for sku, item in state.inventory.items():
+        points = grouped.get(sku, [])
+        if points:
+            df = pd.DataFrame(points, columns=["day_index", "quantity"]).sort_values(
+                "day_index"
+            )
+            df_30 = df.tail(30)
+            avg_d = df_30["quantity"].mean()
+            std_d = df_30["quantity"].std()
+            item.forecast_qty = max(0, int(round(avg_d))) if pd.notna(avg_d) else 0
+            item.std_demand = float(std_d) if pd.notna(std_d) else 0.0
+        else:
+            item.std_demand = getattr(item, "std_demand", 0.0)
+
+        supplier = state.suppliers.get(f"{item.preferred_supplier_id}_{sku}")
+        lead_time = supplier.lead_time_days if supplier else 0
+        reliability = supplier.reliability if supplier else 0.95
+        z_score = _approximate_z_score(reliability)
+        ltd = item.forecast_qty * lead_time
+        safety_stock = (
+            z_score * item.std_demand * math.sqrt(lead_time) if lead_time > 0 else 0.0
+        )
+        item.safety_stock = int(round(safety_stock))
+        item.reorder_point = int(round(ltd + safety_stock))
+
+    state.kpis = recompute_kpis(state)
+    return state
 
 
 def recompute_kpis(state: SystemState, recovery_speed: float | None = None) -> KPIState:

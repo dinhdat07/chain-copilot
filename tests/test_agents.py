@@ -31,5 +31,7 @@ def test_agents_emit_actions_for_supplier_delay() -> None:
     assert risk.observations
     assert demand.observations
     assert inventory.proposals
+    assert inventory.domain_summary
+    assert "reorder point" in inventory.domain_summary
     assert supplier.proposals
     assert isinstance(logistics.proposals, list)
