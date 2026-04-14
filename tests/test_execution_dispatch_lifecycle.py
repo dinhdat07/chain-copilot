@@ -55,17 +55,16 @@ def test_approve_updates_existing_execution_record(tmp_path: Path) -> None:
     payload = response.json()
     assert payload["execution"] is not None
     assert payload["execution"]["execution_id"] == original_execution_id
-    assert payload["execution"]["status"] == "applied"
+    assert payload["execution"]["status"] == "approved"
     assert [item["status"] for item in payload["execution"]["status_history"]] == [
         "planned",
         "approval_pending",
         "approved",
-        "applied",
     ]
 
     execution = client.get(f"/api/v1/execution/{original_execution_id}")
     assert execution.status_code == 200
-    assert execution.json()["item"]["status"] == "applied"
+    assert execution.json()["item"]["status"] == "approved"
 
 
 def test_reject_cancels_existing_execution_record(tmp_path: Path) -> None:
@@ -113,3 +112,49 @@ def test_safer_plan_cancels_old_execution_and_creates_new_one(tmp_path: Path) ->
     replacement_execution = client.get(f"/api/v1/execution/{new_execution_id}")
     assert replacement_execution.status_code == 200
     assert replacement_execution.json()["item"]["status"] in {"approval_pending", "applied"}
+
+
+def test_dry_run_dispatch_is_preview_only(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    daily = client.post("/api/v1/plan/daily")
+    assert daily.status_code == 200
+    plan = daily.json()["latest_plan"]
+    assert plan is not None
+    plan_id = plan["plan_id"]
+
+    first = client.post(f"/api/v1/execution/{plan_id}/dispatch", json={"mode": "dry_run"})
+    assert first.status_code == 200
+    first_payload = first.json()
+    assert first_payload["dispatch_mode"] == "dry_run"
+    assert first_payload["records"]
+
+    history = client.get("/api/v1/execution")
+    assert history.status_code == 200
+    history_payload = history.json()
+    assert all(item["plan_id"] != plan_id for item in history_payload["items"])
+
+
+def test_commit_dispatch_is_idempotent_for_same_plan_and_mode(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    daily = client.post("/api/v1/plan/daily")
+    assert daily.status_code == 200
+    plan = daily.json()["latest_plan"]
+    assert plan is not None
+    plan_id = plan["plan_id"]
+
+    first = client.post(f"/api/v1/execution/{plan_id}/dispatch", json={"mode": "commit"})
+    assert first.status_code == 200
+    first_payload = first.json()
+    first_ids = {item["execution_id"] for item in first_payload["records"]}
+    assert first_ids
+
+    second = client.post(f"/api/v1/execution/{plan_id}/dispatch", json={"mode": "commit"})
+    assert second.status_code == 200
+    second_payload = second.json()
+    second_ids = {item["execution_id"] for item in second_payload["records"]}
+
+    assert second_ids == first_ids
+    assert second_payload["dispatch_mode"] == "commit"
+    assert second_payload["plan_execution_status"] == first_payload["plan_execution_status"]

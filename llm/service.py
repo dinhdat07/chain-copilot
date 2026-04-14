@@ -411,6 +411,10 @@ def _build_planner_candidates_prompt(
         "cost_first, balanced, resilience_first. Only use action ids from candidate_actions."
     )
     instructions.append(
+        "Choose a right-sized action_ids list for each strategy. "
+        "Avoid selecting all candidate actions unless truly necessary for that strategy."
+    )
+    instructions.append(
         "Allowed planner output shape example: "
         '{"candidate_plans":[{"strategy_label":"cost_first","action_ids":["act_x"],"rationale":"..."},'
         '{"strategy_label":"balanced","action_ids":["act_y"],"rationale":"..."},'

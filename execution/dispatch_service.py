@@ -96,7 +96,6 @@ class ActionDispatchService:
         Executes all actions within a plan.
         Returns a summary containing per-action ExecutionRecords and aggregate progress.
         """
-        approval_ts = utc_now().isoformat()
         records: list[ExecutionRecord] = []
         compensation_hints: list[str] = []
 
@@ -104,7 +103,7 @@ class ActionDispatchService:
             if action.action_type == ActionType.NO_OP:
                 continue
 
-            record = self._build_record(plan.plan_id, action, approval_ts)
+            record = self._build_record(plan.plan_id, action, mode)
             record = self._run_action(record, mode=mode)
             records.append(record)
 
@@ -132,9 +131,9 @@ class ActionDispatchService:
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _build_record(self, plan_id: str, action: Action, approval_ts: str) -> ExecutionRecord:
+    def _build_record(self, plan_id: str, action: Action, mode: Literal["dry_run", "commit"]) -> ExecutionRecord:
         target_system, _ = _ROUTING.get(action.action_type, ("ERP", ERPAdapter))
-        idem_key = make_idempotency_key(plan_id, action.action_id, approval_ts)
+        idem_key = make_idempotency_key(plan_id, action.action_id, mode)
         return ExecutionRecord(
             execution_id=f"exec_{uuid4().hex[:8]}",
             plan_id=plan_id,
@@ -143,6 +142,7 @@ class ActionDispatchService:
             target_system=target_system,
             payload=_build_payload(action),
             idempotency_key=idem_key,
+            dispatch_mode=mode,
             status=ExecutionStatus.PLANNED,
         )
 

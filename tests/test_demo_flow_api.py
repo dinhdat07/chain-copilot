@@ -52,7 +52,7 @@ def test_approval_endpoint_applies_pending_plan(tmp_path: Path) -> None:
     payload = response.json()
     assert payload["pending_plan"] is None
     assert payload["latest_plan"] is not None
-    assert payload["latest_plan"]["status"] == PlanStatus.APPLIED.value
+    assert payload["latest_plan"]["status"] == PlanStatus.APPROVED.value
     assert api.RUNTIME.state.decision_logs[-1].approval_status == ApprovalStatus.APPROVED
 
 

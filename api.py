@@ -10,7 +10,7 @@ from app_api.routers import create_router
 from app_api.schemas import ErrorResponse
 from app_api.services import ControlTowerRuntime, make_runtime
 from core.memory import SQLiteStore
-from core.state import load_initial_state
+from core.state import load_initial_state, refresh_operational_baseline
 from orchestrator.graph import build_graph
 from simulation.runner import ScenarioRunner
 from execution.dispatch_service import ActionDispatchService
@@ -53,7 +53,7 @@ def replace_runtime(
     selected_store = store or SQLiteStore()
     RUNTIME = ControlTowerRuntime(
         store=selected_store,
-        state=state or load_initial_state(),
+        state=state or refresh_operational_baseline(load_initial_state()),
         graph=graph or build_graph(),
         runner=runner or ScenarioRunner(store=selected_store),
         dispatch_service=dispatch_service or ActionDispatchService(),

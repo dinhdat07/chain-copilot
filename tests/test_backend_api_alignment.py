@@ -121,7 +121,7 @@ def test_pending_approval_and_unified_approval_command(tmp_path: Path) -> None:
     assert approve_payload["approval_status"] == "approved"
     assert approve_payload["pending_approval"] is None
     assert approve_payload["latest_plan"]["approval_status"] == "approved"
-    assert approve_payload["latest_trace"]["execution_status"] == "approved_and_applied"
+    assert approve_payload["latest_trace"]["execution_status"] == "approved_pending_dispatch"
 
 
 def test_reject_and_safer_plan_transitions_are_explicit(tmp_path: Path) -> None:
@@ -155,6 +155,60 @@ def test_reject_and_safer_plan_transitions_are_explicit(tmp_path: Path) -> None:
         assert reject_payload["pending_approval"] is None
         assert reject_payload["latest_trace"]["execution_status"] == "rejected"
         assert reject_payload["summary"]["pending_approval"] is None
+
+
+def test_operator_can_select_alternative_then_request_single_safer_plan(tmp_path: Path) -> None:
+    client = _client(tmp_path)
+
+    scenario_response = client.post("/api/v1/scenarios/run", json={"scenario_name": "demand_spike"})
+    assert scenario_response.status_code == 200
+    decision_id = scenario_response.json()["decision_id"]
+    assert decision_id is not None
+
+    trace_response = client.get("/api/v1/trace/latest")
+    assert trace_response.status_code == 200
+    trace_payload = trace_response.json()["item"]
+    selected_strategy = trace_payload["selected_strategy"]
+    alternatives = [
+        item for item in trace_payload["candidate_evaluations"]
+        if item["strategy_label"] != selected_strategy
+    ]
+    assert alternatives
+    chosen = alternatives[0]["strategy_label"]
+
+    select_response = client.post(
+        f"/api/v1/approvals/{decision_id}/select-alternative",
+        json={"strategy_label": chosen},
+    )
+    assert select_response.status_code == 200
+    select_payload = select_response.json()
+    assert select_payload["action"] == "select_alternative"
+    assert select_payload["pending_approval"] is not None
+    assert select_payload["pending_approval"]["plan"]["strategy_label"] == chosen
+
+    replacement_decision_id = select_payload["decision_id"]
+    detail_response = client.get(f"/api/v1/approvals/{replacement_decision_id}")
+    assert detail_response.status_code == 200
+    detail_payload = detail_response.json()["item"]
+    assert detail_payload["plan"]["strategy_label"] == chosen
+    assert len(detail_payload["plan"]["actions"]) >= 1
+
+    safer_response = client.post(
+        f"/api/v1/approvals/{replacement_decision_id}",
+        json={"action": "safer_plan"},
+    )
+    assert safer_response.status_code == 200
+    safer_payload = safer_response.json()
+    assert safer_payload["pending_approval"] is not None
+    assert safer_payload["pending_approval"]["plan"]["strategy_label"] == "safer_alternative"
+    assert safer_payload["pending_approval"]["allowed_actions"] == ["approve", "reject"]
+
+    second_safer = client.post(
+        f"/api/v1/approvals/{safer_payload['decision_id']}",
+        json={"action": "safer_plan"},
+    )
+    assert second_safer.status_code == 409
+    assert "once per approval cycle" in second_safer.json()["message"]
 
 
 def test_crisis_trace_records_critic_and_candidate_metadata(tmp_path: Path) -> None:

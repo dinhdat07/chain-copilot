@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from llm.config import load_settings
 
+from core.enums import PlanStatus
 from core.models import DecisionLog, OrchestrationTrace, Plan, SystemState
 from core.runtime_records import (
     DispatchMode,
@@ -78,6 +79,7 @@ def execution_status_from_state(state: SystemState, decision: DecisionLog | None
     if latest_trace is not None:
         status_map = {
             "pending_approval": ExecutionStatus.APPROVAL_PENDING,
+            "approved_pending_dispatch": ExecutionStatus.APPROVED,
             "approved_and_applied": ExecutionStatus.APPLIED,
             "auto_applied": ExecutionStatus.APPLIED,
             "rejected": ExecutionStatus.CANCELLED,
@@ -90,6 +92,8 @@ def execution_status_from_state(state: SystemState, decision: DecisionLog | None
     if state.pending_plan is not None:
         return ExecutionStatus.APPROVAL_PENDING
     if state.latest_plan is not None:
+        if state.latest_plan.status == PlanStatus.APPROVED:
+            return ExecutionStatus.APPROVED
         return ExecutionStatus.APPLIED
     if decision is not None and decision.approval_status.value == "rejected":
         return ExecutionStatus.CANCELLED
@@ -127,6 +131,8 @@ def initial_execution_history(plan: Plan | None, status: ExecutionStatus) -> lis
     history = [_transition(ExecutionStatus.PLANNED, "plan selected for execution lifecycle")]
     if status == ExecutionStatus.APPROVAL_PENDING:
         history.append(_transition(ExecutionStatus.APPROVAL_PENDING, "execution waiting for operator approval"))
+    elif status == ExecutionStatus.APPROVED:
+        history.append(_transition(ExecutionStatus.APPROVED, "execution approved and ready for dispatch"))
     elif status == ExecutionStatus.APPLIED:
         history.append(_transition(ExecutionStatus.APPLIED, "execution auto-applied in simulation"))
     elif status == ExecutionStatus.CANCELLED:

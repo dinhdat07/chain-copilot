@@ -484,7 +484,7 @@ class LangGraphControlTower:
                 state.decision_logs[-1].approval_status = ApprovalStatus.AUTO_APPLIED
             state.mode = Mode.CRISIS if event and state.active_events else Mode.NORMAL
             execution_summary = (
-                f"applied {state.latest_plan.plan_id} using "
+                f"Applied {state.latest_plan.plan_id} using "
                 f"{state.latest_plan.strategy_label or 'unlabeled'} strategy"
             )
             execution_status = "auto_applied"

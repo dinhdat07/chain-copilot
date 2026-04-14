@@ -12,24 +12,24 @@ from core.models import Event, Plan, SystemState, SupplierRecord, ConstraintViol
 
 def mode_rationale(state: SystemState, event: Event | None) -> str:
     if event is None:
-        return "normal mode selected because no disruption event is active"
+        return "Normal mode selected because no disruption event is active"
     if event.type == EventType.COMPOUND:
-        return "crisis mode selected because a compound disruption affects multiple domains"
+        return "Crisis mode selected because a compound disruption affects multiple domains"
     if event.severity >= 0.65:
-        return f"crisis mode selected because event severity {event.severity:.2f} exceeds the crisis threshold"
+        return f"Crisis mode selected because event severity {event.severity:.2f} exceeds the crisis threshold"
     if state.kpis.service_level < 0.93:
         return (
-            f"crisis mode selected because service level {state.kpis.service_level:.2%} "
+            f"Crisis mode selected because service level {state.kpis.service_level:.2%} "
             "fell below the resilience threshold"
         )
     if state.kpis.stockout_risk > 0.30:
         return (
-            f"crisis mode selected because stockout risk {state.kpis.stockout_risk:.2%} "
+            f"Crisis mode selected because stockout risk {state.kpis.stockout_risk:.2%} "
             "exceeds the resilience threshold"
         )
     if state.mode == Mode.NORMAL:
-        return "normal mode selected because disruption severity and service risk remain within operating limits"
-    return "current mode retained based on active disruption context"
+        return "Normal mode selected because disruption severity and service risk remain within operating limits"
+    return "Current mode retained based on active disruption context"
 
 
 # ---------------------------------------------------------------------------

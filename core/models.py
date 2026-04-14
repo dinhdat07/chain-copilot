@@ -154,6 +154,9 @@ class CandidatePlanEvaluation(BaseModel):
     approval_reason: str = ""
     rationale: str = ""
     llm_used: bool = False
+    coverage_fraction: float = 0.0
+    critical_covered: int = 0
+    unresolved_critical: int = 0
 
 
 class HistoricalCase(BaseModel):
