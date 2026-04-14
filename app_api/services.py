@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Any
 from uuid import uuid4
 
@@ -27,7 +28,14 @@ from core.runtime_tracking import (
     new_event_envelope_id,
     new_run_id,
 )
-from core.state import clone_state, load_initial_state, recompute_kpis, state_summary, utc_now
+from core.state import (
+    clone_state,
+    load_initial_state,
+    recompute_kpis,
+    refresh_operational_baseline,
+    state_summary,
+    utc_now,
+)
 from llm.config import load_settings
 
 from orchestrator.graph import build_graph
@@ -37,6 +45,7 @@ from orchestrator.service import (
     request_safer_plan,
     reset_runtime,
     run_daily_plan,
+    select_pending_alternative_plan,
 )
 from simulation.runner import ScenarioRunner
 from simulation.scenarios import get_scenario_events, list_scenarios
@@ -44,6 +53,7 @@ from execution.dispatch_service import ActionDispatchService
 from execution.models import (
     ExecutionRecord as ActionExecutionRecord,
 )
+from execution.state_machine import compute_overall_progress, compute_plan_execution_status
 
 from app_api.schemas import (
     ActionView,
@@ -126,7 +136,7 @@ class ControlTowerRuntime:
         local_store = store or SQLiteStore()
         return cls(
             store=local_store,
-            state=load_initial_state(),
+            state=refresh_operational_baseline(load_initial_state()),
             graph=build_graph(),
             runner=ScenarioRunner(store=local_store),
             dispatch_service=ActionDispatchService(),
@@ -134,13 +144,13 @@ class ControlTowerRuntime:
 
     def reinitialize(self, store: SQLiteStore | None = None) -> None:
         self.store = store or self.store
-        self.state = load_initial_state()
+        self.state = refresh_operational_baseline(load_initial_state())
         self.graph = build_graph()
         self.runner = ScenarioRunner(store=self.store)
         self.dispatch_service = ActionDispatchService()
 
     def reset(self) -> SystemState:
-        self.state = reset_runtime(self.store)
+        self.state = refresh_operational_baseline(reset_runtime(self.store))
         self.graph = build_graph()
         self.runner = ScenarioRunner(store=self.store)
         self.dispatch_service = ActionDispatchService()
@@ -378,21 +388,13 @@ class ControlTowerRuntime:
                 self.state = approve_pending_plan(self.state, self.store, decision_id, True, run_id=run_id)
                 decision = self._latest_decision()
                 if parent_execution is not None:
-                    approved = advance_execution_record(
+                    execution_record = advance_execution_record(
                         parent_execution,
                         run_id=run_id,
                         decision_id=decision.decision_id if decision else decision_id,
                         plan=self.state.latest_plan,
                         status=ExecutionStatus.APPROVED,
-                        reason="operator approved execution in simulation",
-                    )
-                    execution_record = advance_execution_record(
-                        approved,
-                        run_id=run_id,
-                        decision_id=decision.decision_id if decision else decision_id,
-                        plan=self.state.latest_plan,
-                        status=ExecutionStatus.APPLIED,
-                        reason="approved execution applied in simulation",
+                        reason="operator approved execution; awaiting dispatch",
                     )
             elif action == "reject":
                 self.state = approve_pending_plan(self.state, self.store, decision_id, False, run_id=run_id)
@@ -434,6 +436,62 @@ class ControlTowerRuntime:
                 )
         except ValueError:
             raise_not_found("decision", decision_id)
+        except RuntimeError as exc:
+            raise_conflict(str(exc), code="approval_conflict")
+        self._persist_runtime_artifacts(
+            run_id=run_id,
+            run_type=RunType.APPROVAL_RESOLUTION,
+            started_at=started_at,
+            parent_run_id=parent_run_id,
+            execution_record=execution_record,
+        )
+        return self.state
+
+    def select_approval_alternative(self, decision_id: str, strategy_label: str) -> SystemState:
+        started_at = utc_now()
+        parent_run_id = self.state.run_id
+        run_id = new_run_id()
+        self._prepare_approval_trace(run_id)
+
+        parent_execution = self._latest_execution_for_decision(decision_id)
+        if parent_execution is None:
+            parent_execution = self.latest_execution()
+        if parent_execution is None:
+            parent_execution = self._execution_for_id(self._parent_execution_id(parent_run_id))
+
+        execution_record: ExecutionRecord | None = None
+        try:
+            self.state = select_pending_alternative_plan(
+                self.state,
+                self.store,
+                decision_id,
+                strategy_label,
+                run_id=run_id,
+            )
+            decision = self._latest_decision()
+            if parent_execution is not None:
+                cancelled = advance_execution_record(
+                    parent_execution,
+                    run_id=run_id,
+                    decision_id=decision_id,
+                    plan=self.state.latest_plan,
+                    status=ExecutionStatus.CANCELLED,
+                    reason=f"pending execution superseded by selected alternative strategy ({strategy_label})",
+                )
+                self.store.save_execution_record(cancelled)
+            execution_record = build_execution_record(
+                run_id=run_id,
+                state=self.state,
+                decision=decision,
+            )
+        except ValueError as exc:
+            message = str(exc)
+            if message.startswith("candidate strategy not found"):
+                raise_not_found("candidate_strategy", strategy_label)
+            raise_not_found("decision", decision_id)
+        except RuntimeError as exc:
+            raise_conflict(str(exc), code="approval_conflict")
+
         self._persist_runtime_artifacts(
             run_id=run_id,
             run_type=RunType.APPROVAL_RESOLUTION,
@@ -466,11 +524,29 @@ class ControlTowerRuntime:
         if plan is None:
             raise_not_found("plan", plan_id)
 
+        if mode == "commit":
+            existing_records = [
+                ActionExecutionRecord.model_validate(item)
+                for item in self.store.list_action_execution_records(limit=None)
+                if item.get("plan_id") == plan_id and item.get("dispatch_mode", "dry_run") == mode
+            ]
+            if existing_records:
+                existing_records.sort(key=lambda record: record.created_at)
+                return {
+                    "plan_id": plan_id,
+                    "dispatch_mode": mode,
+                    "plan_execution_status": compute_plan_execution_status(existing_records).value,
+                    "overall_progress": compute_overall_progress(existing_records),
+                    "records": [action_execution_record_view(r) for r in existing_records],
+                    "compensation_hints": [],
+                }
+
         summary = self.dispatch_service.dispatch_plan(plan, mode=mode)
         
-        # PERSIST granular records for polling
-        for record in summary.records:
-            self.store.save_action_execution_record(record.execution_id, record.model_dump(mode="json"))
+        # Persist only commit-mode records; dry-run is preview-only.
+        if mode == "commit":
+            for record in summary.records:
+                self.store.save_action_execution_record(record.execution_id, record.model_dump(mode="json"))
 
         # Mapping to PlanDispatchResponse format
         return {
@@ -594,15 +670,11 @@ def kpi_view(kpis) -> KPIView:
 
 def event_envelope_view(item: EventEnvelope | dict) -> EventEnvelopeView:
     payload = item if isinstance(item, EventEnvelope) else EventEnvelope.model_validate(item)
-    if isinstance(payload, EventEnvelope):
-        payload = payload
     return EventEnvelopeView(**payload.model_dump(mode="json"))
 
 
 def run_record_view(item: RunRecord | dict) -> RunView:
     payload = item if isinstance(item, RunRecord) else RunRecord.model_validate(item)
-    if isinstance(payload, RunRecord):
-        payload = payload
     return RunView(**payload.model_dump(mode="json"))
 
 
@@ -712,6 +784,9 @@ def candidate_evaluation_view(item) -> CandidateEvaluationView:
         approval_reason=item.approval_reason,
         rationale=item.rationale,
         llm_used=item.llm_used,
+        coverage_fraction=item.coverage_fraction,
+        critical_covered=item.critical_covered,
+        unresolved_critical=item.unresolved_critical,
     )
 
 
@@ -755,14 +830,88 @@ def decision_detail_view(item: DecisionLog) -> DecisionLogDetailView:
     )
 
 
-def _inventory_status(item) -> str:
-    available = item.on_hand + item.incoming_qty
-    if available <= 0:
+def _approximate_z_score(service_level: float) -> float:
+    # Acklam-style approximation is sufficient for deterministic policy scoring.
+    p = max(0.5001, min(0.9999, service_level))
+    t = math.sqrt(-2.0 * math.log(1.0 - p))
+    c0, c1, c2 = 2.515517, 0.802853, 0.010328
+    d1, d2, d3 = 1.432788, 0.189269, 0.001308
+    z = t - ((c2 * t + c1) * t + c0) / (((d3 * t + d2) * t + d1) * t + 1.0)
+    return max(0.0, z)
+
+
+def _supplier_for_item(state: SystemState, item) -> Any | None:
+    return state.suppliers.get(f"{item.preferred_supplier_id}_{item.sku}")
+
+
+def _route_factor(state: SystemState, item) -> float:
+    route = state.routes.get(item.preferred_route_id)
+    if route is None:
+        return 1.0
+    if route.status == "blocked":
+        return 0.0
+    # High-risk lanes reduce expected usable inbound, but avoid over-penalizing
+    # because route/supplier uncertainty is already reflected in safety stock.
+    return max(0.85, 1.0 - (route.risk_score * 0.15))
+
+
+def _lead_time_days(state: SystemState, item) -> int:
+    supplier = _supplier_for_item(state, item)
+    return max(int(supplier.lead_time_days), 1) if supplier is not None else 1
+
+
+def _expected_inbound_within_lt(state: SystemState, item) -> float:
+    return max(item.incoming_qty * _route_factor(state, item), 0.0)
+
+
+def _committed_qty_within_lt(state: SystemState, item) -> int:
+    lead_time = _lead_time_days(state, item)
+    committed = sum(
+        order.quantity
+        for order in state.orders
+        if order.sku == item.sku and order.day_index <= lead_time
+    )
+    # Prevent double-counting with forecast-based lead-time demand.
+    return min(committed, max(item.forecast_qty, 0))
+
+
+def _inventory_position(state: SystemState, item) -> float:
+    return item.on_hand + _expected_inbound_within_lt(state, item) - _committed_qty_within_lt(state, item)
+
+
+def _dynamic_safety_stock(state: SystemState, item) -> float:
+    supplier = _supplier_for_item(state, item)
+    reliability = supplier.reliability if supplier is not None else 0.9
+    lead_time = _lead_time_days(state, item)
+    demand_std = max(float(getattr(item, "std_demand", 0.0)), 0.0)
+    demand_mean = max(float(item.forecast_qty), 0.0)
+    lead_time_std = max((1.0 - reliability) * lead_time, 0.0)
+    service_target = 0.95 if reliability >= 0.85 else 0.97
+    z = _approximate_z_score(service_target)
+    variance = (demand_std**2 * lead_time) + ((demand_mean**2) * (lead_time_std**2))
+    dynamic_ss = z * (variance**0.5)
+    return max(float(item.safety_stock), dynamic_ss)
+
+
+def _dynamic_reorder_point(state: SystemState, item) -> float:
+    lead_time = _lead_time_days(state, item)
+    lead_time_demand = max(float(item.forecast_qty), 0.0) * lead_time
+    return lead_time_demand + _dynamic_safety_stock(state, item)
+
+
+def _inventory_status(state: SystemState, item) -> str:
+    inventory_position = _inventory_position(state, item)
+    dynamic_ss = _dynamic_safety_stock(state, item)
+    dynamic_rop = _dynamic_reorder_point(state, item)
+    net_available = item.on_hand - _committed_qty_within_lt(state, item)
+
+    if net_available <= 0 and inventory_position <= 0:
         return "out_of_stock"
-    if available <= item.reorder_point:
-        return "low"
-    if available <= item.safety_stock:
+    if inventory_position <= dynamic_ss:
         return "at_risk"
+    # Small guard-band prevents borderline rounding noise from flooding low alerts.
+    if inventory_position <= (dynamic_rop * 0.97):
+        return "low"
     return "in_stock"
 
 
@@ -771,7 +920,7 @@ def inventory_rows(state: SystemState, *, search: str | None = None, status: str
     status_filter = (status or "").strip().lower()
     rows: list[InventoryRowView] = []
     for item in state.inventory.values():
-        item_status = _inventory_status(item)
+        item_status = _inventory_status(state, item)
         matches_needle = (
             not needle
             or needle in item.sku.lower()
@@ -882,12 +1031,15 @@ def pending_approval_view(state: SystemState) -> PendingApprovalView | None:
     if state.pending_plan is None or not state.decision_logs:
         return None
     decision = state.decision_logs[-1]
+    can_request_safer = state.pending_plan.generated_by != "operator_safer_request"
+    allowed_actions = ["approve", "reject"] + (["safer_plan"] if can_request_safer else [])
     return PendingApprovalView(
         decision_id=decision.decision_id,
         approval_status=decision.approval_status.value,
         approval_reason=decision.approval_reason,
         selection_reason=decision.selection_reason,
         selected_actions=decision.selected_actions,
+        allowed_actions=allowed_actions,
         before_kpis=kpi_view(decision.before_kpis),
         projected_kpis=kpi_view(decision.after_kpis),
         candidate_count=len(decision.candidate_evaluations),
@@ -901,6 +1053,8 @@ def approval_detail_view(state: SystemState, decision_id: str) -> ApprovalDetail
     if plan is None or plan.plan_id != decision.plan_id:
         plan = None
     pending = state.pending_plan is not None and state.pending_plan.plan_id == decision.plan_id
+    can_request_safer = not pending or state.pending_plan.generated_by != "operator_safer_request"
+    allowed_actions = ["approve", "reject"] + (["safer_plan"] if can_request_safer else [])
     return ApprovalDetailView(
         decision_id=decision.decision_id,
         plan_id=decision.plan_id,
@@ -908,7 +1062,7 @@ def approval_detail_view(state: SystemState, decision_id: str) -> ApprovalDetail
         approval_status=decision.approval_status.value,
         approval_reason=decision.approval_reason,
         is_pending=pending,
-        allowed_actions=["approve", "reject", "safer_plan"] if pending else [],
+        allowed_actions=allowed_actions if pending else [],
         selection_reason=decision.selection_reason,
         selected_actions=decision.selected_actions,
         event_ids=decision.event_ids,
@@ -939,9 +1093,10 @@ def approval_command_result_view(
     execution: ExecutionRecord | None = None,
 ) -> ApprovalCommandResultResponse:
     message_map = {
-        "approve": "Pending plan approved and applied.",
+        "approve": "Pending plan approved and queued for dispatch.",
         "reject": "Pending plan rejected.",
         "safer_plan": "Safer plan requested.",
+        "select_alternative": "Alternative strategy selected and queued for approval.",
     }
     decision = find_decision(state, decision_id)
     return ApprovalCommandResultResponse(
