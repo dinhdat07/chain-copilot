@@ -57,7 +57,6 @@ def _load_dotenv_file() -> None:
         key, value = parsed
         os.environ.setdefault(key, value)
 
-
 def _planner_mode() -> str:
     value = os.getenv("CHAINCOPILOT_PLANNER_MODE", "hybrid").strip().lower()
     if value in {"hybrid", "deterministic"}:
@@ -137,3 +136,5 @@ def load_settings() -> LLMSettings:
         vertex_region=vertex_region or "global",
         agent_models=agent_models,
     )
+
+
