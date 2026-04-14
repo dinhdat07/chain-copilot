@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from uuid import uuid4
 
-from actions.executor import simulate_actions
 from agents.base import BaseAgent
 from core.enums import ActionType, ApprovalStatus, PlanStatus
 from core.models import (
@@ -32,6 +31,7 @@ from policies.strategic_prompt import (
     derive_strategy_rationale,
     build_strategic_prompt,
 )
+from simulation.evaluator import evaluate_candidate_plan
 
 logger = get_logger(__name__)
 
@@ -350,6 +350,11 @@ def _evaluate_candidate(
                 "recovery_speed": 0.0,
             },
             projected_kpis=before_kpis.model_copy(deep=True),
+            worst_case_kpis=before_kpis.model_copy(deep=True),
+            simulation_horizon_days=0,
+            projection_steps=[],
+            projected_state_summary=None,
+            projection_summary="candidate was not simulated because hard constraints failed",
             feasible=False,
             violations=violations,
             mode_rationale=selected_mode_rationale,
@@ -358,12 +363,16 @@ def _evaluate_candidate(
             rationale=rationale,
             llm_used=llm_used,
         )
-    simulated = simulate_actions(state, actions)
+    projection = evaluate_candidate_plan(
+        state=state,
+        event=event,
+        actions=actions,
+    )
     score, breakdown = compute_score(
-        service_level=simulated.kpis.service_level,
-        total_cost=simulated.kpis.total_cost,
-        disruption_risk=simulated.kpis.disruption_risk,
-        recovery_speed=simulated.kpis.recovery_speed,
+        service_level=projection.worst_case_kpis.service_level,
+        total_cost=projection.projected_kpis.total_cost,
+        disruption_risk=projection.worst_case_kpis.disruption_risk,
+        recovery_speed=projection.projected_kpis.recovery_speed,
         mode=state.mode,
         baseline_cost=before_kpis.total_cost,
     )
@@ -379,13 +388,23 @@ def _evaluate_candidate(
         planner_reasoning=rationale,
         status=PlanStatus.PROPOSED,
     )
-    needs_approval, reason = approval_required(transient_plan, before_kpis, simulated.kpis, event)
+    needs_approval, reason = approval_required(
+        transient_plan,
+        before_kpis,
+        projection.projected_kpis,
+        event,
+    )
     return CandidatePlanEvaluation(
         strategy_label=strategy_label,
         action_ids=[action.action_id for action in actions],
         score=score,
         score_breakdown=breakdown,
-        projected_kpis=simulated.kpis,
+        projected_kpis=projection.projected_kpis,
+        worst_case_kpis=projection.worst_case_kpis,
+        simulation_horizon_days=projection.simulation_horizon_days,
+        projection_steps=projection.projection_steps,
+        projected_state_summary=projection.projected_state_summary,
+        projection_summary=projection.projection_summary,
         feasible=True,
         violations=[],
         mode_rationale=selected_mode_rationale,
@@ -814,6 +833,11 @@ def _safe_hold_evaluation(
         score=score,
         score_breakdown=breakdown,
         projected_kpis=before_kpis.model_copy(deep=True),
+        worst_case_kpis=before_kpis.model_copy(deep=True),
+        simulation_horizon_days=0,
+        projection_steps=[],
+        projected_state_summary=None,
+        projection_summary="the system retained the current network position because no feasible candidate plan was available",
         feasible=True,
         violations=[],
         mode_rationale=mode_rationale(state, event),
@@ -998,6 +1022,9 @@ class PlannerAgent(BaseAgent):
             mode=state.mode,
             runner_up=runner_up,
             mode_rationale=selected_evaluation.mode_rationale,
+            projection_summary=selected_evaluation.projection_summary,
+            simulation_horizon_days=selected_evaluation.simulation_horizon_days,
+            worst_case_kpis=selected_evaluation.worst_case_kpis,
         )
 
         final_plan = Plan(

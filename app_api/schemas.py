@@ -124,12 +124,40 @@ class ConstraintViolationView(BaseModel):
     severity: str = "hard"
 
 
+class ProjectionStepView(BaseModel):
+    step_index: int
+    label: str
+    kpis: KPIView
+    event_severity: float
+    inventory_at_risk: int
+    inventory_out_of_stock: int
+    backlog_units: int
+    inbound_units_due: int
+    summary: str = ""
+    key_changes: list[str] = Field(default_factory=list)
+
+
+class ProjectedStateSummaryView(BaseModel):
+    inventory_at_risk: int
+    inventory_out_of_stock: int
+    backlog_units: int
+    inbound_units_scheduled: int
+    dominant_constraint: str = ""
+    event_severity_end: float = 0.0
+    summary: str = ""
+
+
 class CandidateEvaluationView(BaseModel):
     strategy_label: str
     action_ids: list[str] = Field(default_factory=list)
     score: float
     score_breakdown: dict[str, float] = Field(default_factory=dict)
     projected_kpis: KPIView
+    worst_case_kpis: KPIView | None = None
+    simulation_horizon_days: int = 0
+    projection_steps: list[ProjectionStepView] = Field(default_factory=list)
+    projected_state_summary: ProjectedStateSummaryView | None = None
+    projection_summary: str = ""
     feasible: bool = True
     violations: list[ConstraintViolationView] = Field(default_factory=list)
     mode_rationale: str = ""

@@ -76,6 +76,8 @@ from app_api.schemas import (
     KPIView,
     PendingApprovalView,
     PlanView,
+    ProjectedStateSummaryView,
+    ProjectionStepView,
     ReflectionView,
     RunView,
     RouteDecisionView,
@@ -725,6 +727,25 @@ def constraint_violation_view(item: ConstraintViolation) -> ConstraintViolationV
     return ConstraintViolationView(**item.model_dump(mode="json"))
 
 
+def projection_step_view(item) -> ProjectionStepView:
+    return ProjectionStepView(
+        step_index=item.step_index,
+        label=item.label,
+        kpis=kpi_view(item.kpis),
+        event_severity=item.event_severity,
+        inventory_at_risk=item.inventory_at_risk,
+        inventory_out_of_stock=item.inventory_out_of_stock,
+        backlog_units=item.backlog_units,
+        inbound_units_due=item.inbound_units_due,
+        summary=item.summary,
+        key_changes=item.key_changes,
+    )
+
+
+def projected_state_summary_view(item) -> ProjectedStateSummaryView:
+    return ProjectedStateSummaryView(**item.model_dump(mode="json"))
+
+
 def plan_view(plan: Plan | None, decision: DecisionLog | None = None) -> PlanView | None:
     if plan is None:
         return None
@@ -777,6 +798,15 @@ def candidate_evaluation_view(item) -> CandidateEvaluationView:
         score=item.score,
         score_breakdown=item.score_breakdown,
         projected_kpis=kpi_view(item.projected_kpis),
+        worst_case_kpis=kpi_view(item.worst_case_kpis) if item.worst_case_kpis is not None else None,
+        simulation_horizon_days=item.simulation_horizon_days,
+        projection_steps=[projection_step_view(step) for step in item.projection_steps],
+        projected_state_summary=(
+            projected_state_summary_view(item.projected_state_summary)
+            if item.projected_state_summary is not None
+            else None
+        ),
+        projection_summary=item.projection_summary,
         feasible=item.feasible,
         violations=[constraint_violation_view(violation) for violation in item.violations],
         mode_rationale=item.mode_rationale,
