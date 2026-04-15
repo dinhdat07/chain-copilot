@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect
 
 from app_api.schemas import (
     ActionExecutionRecordView,
@@ -73,7 +74,6 @@ MOCK_ENVIRONMENT = "normal"
 
 def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRouter:
     router = APIRouter(
-        prefix="/api/v1",
         responses={
             404: {"model": ErrorResponse},
             409: {"model": ErrorResponse},
@@ -630,4 +630,110 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
         runtime = runtime_getter()
         return runtime.what_if(request.scenario_name, seed=request.seed)
 
+    # ------------------------------------------------------------------
+    # Streaming: WebSocket + trigger endpoint
+    # ------------------------------------------------------------------
+
+    @router.post("/plan/daily/stream")
+    async def daily_plan_stream(background_tasks: BackgroundTasks) -> dict:
+        """
+        Trigger a daily-plan run with streaming.
+
+        Flow:
+            1. Client calls POST /plan/daily/stream â†’ receives {run_id, ws_url}
+            2. Client connects to WS /ws/thinking/{run_id} â†’ receives real-time ThinkingEvents
+            3. After graph completion, server closes WS channel (sentinel None)
+
+        Backward compat: Legacy endpoint POST /plan/daily remains independent.
+        """
+        from core.runtime_tracking import new_run_id
+        run_id = new_run_id()
+        background_tasks.add_task(_stream_daily_plan, runtime_getter, run_id)
+        return {
+            "run_id": run_id,
+            "ws_url": f"/ws/thinking/{run_id}",
+        }
+
+    @router.websocket("/ws/thinking/{run_id}")
+    async def websocket_thinking_stream(websocket: WebSocket, run_id: str) -> None:
+        """
+        WebSocket endpoint for real-time thinking/reasoning stream.
+        
+        Subscribes to the event bus for the given run_id and sends
+        ThinkingEvents to the connected client as they occur.
+        
+        Connection closes when:
+          - Graph completes (server sends sentinel None)
+          - Client disconnects
+          - Timeout after 120 seconds
+        """
+        from streaming.event_bus import event_bus
+        
+        await websocket.accept()
+        try:
+            async for event in event_bus.subscribe(run_id):
+                if event is None:
+                    break
+                await websocket.send_json(event.model_dump())
+        except WebSocketDisconnect:
+            pass
+        finally:
+            await websocket.close()
+
     return router
+
+
+# ------------------------------------------------------------------
+# Background task helpers (module-level â€” outside create_router)
+# ------------------------------------------------------------------
+
+async def _stream_daily_plan(runtime_getter: Callable, run_id: str) -> None:
+    """
+    Runs the graph in a threadpool executor to avoid blocking the event loop.
+    Ensures event_bus.close() is always called, even on exception.
+    """
+    from streaming.event_bus import event_bus
+    from streaming.schemas import ThinkingEvent
+
+    loop = asyncio.get_event_loop()
+    runtime = runtime_getter()
+    try:
+        await loop.run_in_executor(
+            None,
+            lambda: _sync_run_with_run_id(runtime, run_id),
+        )
+    except Exception as exc:
+        # Emit error event before closing the channel
+        event_bus.publish(
+            run_id,
+            ThinkingEvent(
+                type="error",
+                agent="system",
+                step="fatal",
+                message=f"{exc.__class__.__name__}: {exc}",
+                data={"exception": exc.__class__.__name__},
+            ),
+        )
+    finally:
+        event_bus.close(run_id)
+
+
+def _sync_run_with_run_id(runtime, run_id: str) -> None:
+    """
+    Sync wrapper â€” runs in thread pool.
+    Calls graph.invoke() with run_id so _emit() calls can publish to the bus.
+    Saves state and artifacts after completion (mirrors run_daily logic).
+    """
+    from orchestrator.service import (
+        PendingApprovalError,
+        _save_state,
+        ensure_no_pending_plan,
+    )
+    from fastapi import HTTPException as _HTTPException
+
+    ensure_no_pending_plan(runtime.state)
+    # graph.invoke() forwards run_id into OrchestrationState
+    # so every _emit() in nodes will publish to event_bus
+    updated = runtime.graph.invoke(runtime.state, None, run_id=run_id)
+    _save_state(updated, runtime.store)
+    runtime.state = updated

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
@@ -64,7 +64,9 @@ def replace_runtime(
 
 def create_app(runtime: ControlTowerRuntime | None = None) -> FastAPI:
     """Application factory for the ChainCopilot API."""
+    print(">>> CALLING create_app")
     if runtime is not None:
+
         replace_runtime(
             store=runtime.store,
             state=runtime.state,
@@ -74,7 +76,6 @@ def create_app(runtime: ControlTowerRuntime | None = None) -> FastAPI:
         )
     instance = FastAPI(title="ChainCopilot API", version="0.2.0")
     
-    # Configure CORS middleware
     instance.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -83,8 +84,32 @@ def create_app(runtime: ControlTowerRuntime | None = None) -> FastAPI:
         allow_headers=["*"],
     )
 
+    @instance.get("/health")
+    def health():
+        return {"status": "ok", "version": "0.2.0-ws-debug"}
+
     # Modular routers - Includes all /api/v1 endpoints
-    instance.include_router(create_router(lambda: RUNTIME))
+
+    instance.include_router(create_router(lambda: RUNTIME), prefix="/api/v1")
+
+    # Direct WebSocket route (UNIQUE PATH - NO PREFIX)
+    print(">>> REGISTERING WEBSOCKET: /thinking-stream/{run_id}")
+    @instance.websocket("/thinking-stream/{run_id}")
+    async def thinking_stream(websocket: WebSocket, run_id: str) -> None:
+        from streaming.event_bus import event_bus
+        await websocket.accept()
+        try:
+            async for thinking_event in event_bus.subscribe(run_id):
+                await websocket.send_text(thinking_event.model_dump_json())
+        except WebSocketDisconnect:
+            pass
+        except Exception:
+            pass
+        finally:
+            try:
+                await websocket.close()
+            except Exception:
+                pass
 
     register_error_handlers(instance)
     return instance
@@ -150,3 +175,7 @@ def register_error_handlers(instance: FastAPI) -> None:
 
 sync_legacy_globals()
 app = create_app(RUNTIME)
+
+@app.get("/health-module")
+def health_module():
+    return {"status": "ok", "source": "module-level"}
