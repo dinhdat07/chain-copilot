@@ -56,16 +56,24 @@ class RunEventBus:
         """
         Sends sentinel None into each queue to signal end-of-stream.
         Subscribers will exit the loop upon receiving None.
+
+        If a queue is full, drains one item to make room for the sentinel
+        so the subscriber is guaranteed to receive the termination signal.
         """
         for loop, q in list(self._queues.get(run_id, [])):
-            if q.full():
-                continue
             try:
+                if q.full():
+                    # Drain one slot so sentinel can be enqueued
+                    try:
+                        q.get_nowait()
+                    except Exception:
+                        pass
                 loop.call_soon_threadsafe(q.put_nowait, None)
             except Exception:
                 pass
-        # Clean up sequence counter
+        # Clean up sequence counter and queue registry
         self._seq.pop(run_id, None)
+        self._queues.pop(run_id, None)
 
     # ------------------------------------------------------------------ #
     # Consumer side — called from async WebSocket handler
@@ -101,8 +109,8 @@ class RunEventBus:
                 # Pace the events so UI doesn't get flooded in exactly the same millisecond
                 now = time.time()
                 elapsed = now - last_yield
-                if elapsed < 0.5:
-                    await asyncio.sleep(0.5 - elapsed)
+                if elapsed < 0.1:
+                    await asyncio.sleep(0.1 - elapsed)
                 last_yield = time.time()
                 
                 yield event

@@ -624,6 +624,15 @@ class LangGraphControlTower:
         event = graph_state.get("event")
         trace_updater = graph_state.get("trace_updater")
         
+        plan_label = state.latest_plan.strategy_label if state.latest_plan else "unknown"
+        self._emit(graph_state, type="analysis", agent="critic", step="review_init",
+                   message=f"Critic reviewing plan '{plan_label}' for feasibility and risk compliance",
+                   data={
+                       "plan_id": state.latest_plan.plan_id if state.latest_plan else None,
+                       "strategy": plan_label,
+                       "action_count": len(state.latest_plan.actions) if state.latest_plan else 0,
+                   })
+        
         self._start_step(state, "critic", "agent", event)
         self._notify_trace_update(state, trace_updater)
         
@@ -655,6 +664,25 @@ class LangGraphControlTower:
             },
         )
         critic_route = route_after_critic({"state": state})
+        finding_count = (
+            len(state.decision_logs[-1].critic_findings)
+            if state.decision_logs else 0
+        )
+        critic_summary = (
+            state.decision_logs[-1].critic_summary
+            if state.decision_logs else "no findings"
+        )
+        self._emit(graph_state, type="reflection", agent="critic", step="review_done",
+                   message=f"Critic completed review — {finding_count} finding(s)",
+                   data={
+                       "finding_count": finding_count,
+                       "critic_summary": critic_summary,
+                       "approval_required": state.latest_plan.approval_required if state.latest_plan else False,
+                   })
+        self._emit(graph_state, type="decision", agent="critic", step="routing",
+                   message=f"Critic routing → {critic_route}",
+                   data={"next_node": critic_route,
+                         "reason": self._critic_route_reason(state, critic_route)})
         self._record_route(
             state,
             "critic",
