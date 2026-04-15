@@ -111,7 +111,9 @@ def _append_approval_trace(
     state.latest_trace.decision_id = decision_id
     state.latest_trace.approval_pending = approval_pending
     state.latest_trace.execution_status = execution_status
-    state.latest_trace.terminal_stage = "approval" if approval_pending or to_node == "closed" else "execution"
+    state.latest_trace.terminal_stage = (
+        "approval" if approval_pending or to_node == "closed" else "execution"
+    )
     state.latest_trace.mode_after = state.mode.value
     state.latest_trace.completed_at = now
     state.latest_trace.status = "completed"
@@ -156,14 +158,16 @@ def _action_lookup_for_pending_context(state: SystemState) -> dict[str, Action]:
 def _build_safer_plan(state: SystemState, decision_log: DecisionLog) -> Plan:
     assert state.pending_plan is not None
     candidate_actions = list(state.pending_plan.actions)
-    
-    from policies.constraints import evaluate_hard_constraints, evaluate_soft_constraints
-    
+
+    from policies.constraints import (
+        evaluate_hard_constraints,
+        evaluate_soft_constraints,
+    )
+
     feasible_candidates = []
     for act in candidate_actions:
         dummy_plan = Plan(
-            plan_id="tmp", mode=state.mode, 
-            score=0.0, score_breakdown={}, actions=[act]
+            plan_id="tmp", mode=state.mode, score=0.0, score_breakdown={}, actions=[act]
         )
         is_feas, vios = evaluate_hard_constraints(dummy_plan, state)
         if is_feas:
@@ -220,8 +224,10 @@ def _build_safer_plan(state: SystemState, decision_log: DecisionLog) -> Plan:
     plan.feasible = True
     plan.violations = soft_violations
     if soft_violations:
-        plan.mode_rationale = "Soft constraints warnings: " + "; ".join(v.message for v in soft_violations)
-        
+        plan.mode_rationale = "Soft constraints warnings: " + "; ".join(
+            v.message for v in soft_violations
+        )
+
     needs_approval, reason = approval_required(
         plan,
         decision_log.before_kpis,
@@ -240,7 +246,9 @@ def _build_alternative_plan(
     evaluation: CandidatePlanEvaluation,
 ) -> Plan:
     by_id = _action_lookup_for_pending_context(state)
-    actions = [by_id[action_id] for action_id in evaluation.action_ids if action_id in by_id]
+    actions = [
+        by_id[action_id] for action_id in evaluation.action_ids if action_id in by_id
+    ]
     if not actions:
         raise ValueError("selected alternative has no executable actions")
 
@@ -300,11 +308,14 @@ def _build_alternative_plan(
         _latest_event(state),
     )
     plan.approval_required = True
-    plan.approval_reason = _merge_reason_parts(
-        f"operator selected alternative strategy ({evaluation.strategy_label})",
-        evaluation.approval_reason,
-        reason if needs_approval else "",
-    ) or "operator selected alternative strategy and kept the plan in manual approval"
+    plan.approval_reason = (
+        _merge_reason_parts(
+            f"operator selected alternative strategy ({evaluation.strategy_label})",
+            evaluation.approval_reason,
+            reason if needs_approval else "",
+        )
+        or "operator selected alternative strategy and kept the plan in manual approval"
+    )
     return plan
 
 
@@ -313,9 +324,12 @@ def run_daily_plan(
     store: SQLiteStore,
     graph: Any | None = None,
     run_id: str | None = None,
+    trace_updater: Any = None,
 ) -> SystemState:
     ensure_no_pending_plan(state)
-    updated = (graph or build_graph()).invoke(state, None, run_id=run_id)
+    updated = (graph or build_graph()).invoke(
+        state, None, run_id=run_id, trace_updater=trace_updater
+    )
     _save_state(updated, store)
     return updated
 
@@ -388,7 +402,9 @@ def request_safer_plan(
     if state.pending_plan is None:
         raise ValueError("no pending decision")
     if state.pending_plan.generated_by == "operator_safer_request":
-        raise RuntimeError("safer alternative can only be requested once per approval cycle")
+        raise RuntimeError(
+            "safer alternative can only be requested once per approval cycle"
+        )
 
     previous_plan_actions = list(state.pending_plan.actions)
     state.pending_plan.status = PlanStatus.REJECTED
@@ -410,7 +426,9 @@ def request_safer_plan(
         safer_projection.projected_kpis,
         safer_plan.score_breakdown,
     )
-    rejection_reasons = explain_rejected_actions(previous_plan_actions, safer_plan.actions, 1)
+    rejection_reasons = explain_rejected_actions(
+        previous_plan_actions, safer_plan.actions, 1
+    )
     new_decision = DecisionLog(
         decision_id=f"dec_{uuid4().hex[:8]}",
         plan_id=safer_plan.plan_id,
@@ -486,7 +504,9 @@ def select_pending_alternative_plan(
     if evaluation is None:
         raise ValueError(f"candidate strategy not found: {strategy_label}")
     if state.pending_plan.strategy_label == evaluation.strategy_label:
-        raise RuntimeError(f"{evaluation.strategy_label} is already the selected pending strategy")
+        raise RuntimeError(
+            f"{evaluation.strategy_label} is already the selected pending strategy"
+        )
 
     previous_plan_actions = list(state.pending_plan.actions)
     state.pending_plan.status = PlanStatus.REJECTED
@@ -514,9 +534,7 @@ def select_pending_alternative_plan(
         len(alternative_plan.actions),
     )
 
-    selection_reason = (
-        f"Operator selected the {evaluation.strategy_label} alternative for manual execution review."
-    )
+    selection_reason = f"Operator selected the {evaluation.strategy_label} alternative for manual execution review."
     new_decision = DecisionLog(
         decision_id=f"dec_{uuid4().hex[:8]}",
         plan_id=alternative_plan.plan_id,
