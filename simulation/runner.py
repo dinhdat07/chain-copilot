@@ -32,16 +32,17 @@ class ScenarioRunner:
         scenario_name: str,
         seed: int = 7,
         trace_updater=None,
+        run_id: str | None = None,
     ) -> SystemState:
         ensure_no_pending_plan(initial_state)
         state = clone_state(initial_state)
         started = time.perf_counter()
         events = get_scenario_events(scenario_name)
         scenario_correlation_id = new_correlation_id("scenario")
-        for event in events:
+        for i, event in enumerate(events):
             started_at = event.detected_at
             parent_run_id = state.run_id
-            run_id = new_run_id()
+            current_run_id = run_id if (i == 0 and run_id) else new_run_id()
             envelope = EventEnvelope(
                 event_id=new_event_envelope_id(),
                 event_class=EventClass.DOMAIN,
@@ -58,16 +59,16 @@ class ScenarioRunner:
             )
             self.store.save_event_envelope(envelope)
             state = self.graph.invoke(
-                state, event, run_id=run_id, trace_updater=trace_updater
+                state, event, run_id=current_run_id, trace_updater=trace_updater
             )
             decision = state.decision_logs[-1] if state.decision_logs else None
             execution = build_execution_record(
-                run_id=run_id, state=state, decision=decision
+                run_id=current_run_id, state=state, decision=decision
             )
             if execution is not None:
                 self.store.save_execution_record(execution)
             run_record = build_run_record(
-                run_id=run_id,
+                run_id=current_run_id,
                 run_type=RunType.SCENARIO_STEP,
                 state=state,
                 started_at=started_at,
@@ -76,9 +77,9 @@ class ScenarioRunner:
                 execution_id=execution.execution_id if execution is not None else None,
             )
             self.store.save_run_record(run_record)
-            trace = clone_trace_for_run(state.latest_trace, run_id)
+            trace = clone_trace_for_run(state.latest_trace, current_run_id)
             if trace is not None:
-                self.store.save_trace(run_id, trace)
+                self.store.save_trace(current_run_id, trace)
             self.store.save_state(state)
             if decision is not None:
                 self.store.save_decision_log(decision)

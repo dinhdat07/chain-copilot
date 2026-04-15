@@ -609,6 +609,27 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
         payload["scenario_history_count"] = len(runtime.state.scenario_history)
         return payload
 
+    @router.post("/scenarios/run/stream")
+    def stream_run_scenario(request: ScenarioRequest, background_tasks: BackgroundTasks) -> dict:
+        """
+        Trigger a scenario run with streaming via WebSocket.
+        """
+        global MOCK_ENVIRONMENT
+        MOCK_ENVIRONMENT = request.scenario_name
+        from core.runtime_tracking import new_run_id
+        run_id = new_run_id()
+        background_tasks.add_task(
+            _stream_scenario_plan,
+            runtime_getter,
+            run_id,
+            request.scenario_name,
+            request.seed,
+        )
+        return {
+            "run_id": run_id,
+            "ws_url": f"/ws/thinking/{run_id}",
+        }
+
     @router.post("/decisions/{decision_id}/approve")
     def approve_decision(decision_id: str, request: LegacyApprovalRequest) -> dict:
         runtime = runtime_getter()
@@ -660,25 +681,30 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
         WebSocket endpoint for real-time thinking/reasoning stream.
         
         Subscribes to the event bus for the given run_id and sends
-        ThinkingEvents to the connected client as they occur.
-        
-        Connection closes when:
-          - Graph completes (server sends sentinel None)
-          - Client disconnects
-          - Timeout after 120 seconds
+        a combined payload of the current event and the full trace update.
         """
         from streaming.event_bus import event_bus
         
         await websocket.accept()
+        runtime = runtime_getter()
         try:
             async for event in event_bus.subscribe(run_id):
                 if event is None:
                     break
-                await websocket.send_json(event.model_dump())
+                
+                # Send a combined payload: the specific event + the overall trace snapshot
+                payload = {
+                    "event": event.model_dump(),
+                    "trace": latest_trace_view(runtime.state).model_dump(mode="json"),
+                }
+                await websocket.send_json(payload)
         except WebSocketDisconnect:
             pass
         finally:
-            await websocket.close()
+            try:
+                await websocket.close()
+            except Exception:
+                pass
 
     return router
 
@@ -737,3 +763,39 @@ def _sync_run_with_run_id(runtime, run_id: str) -> None:
     updated = runtime.graph.invoke(runtime.state, None, run_id=run_id)
     _save_state(updated, runtime.store)
     runtime.state = updated
+
+
+async def _stream_scenario_plan(
+    runtime_getter: Callable, run_id: str, scenario_name: str, seed: int
+) -> None:
+    from streaming.event_bus import event_bus
+    from streaming.schemas import ThinkingEvent
+
+    loop = asyncio.get_event_loop()
+    runtime = runtime_getter()
+    try:
+        await loop.run_in_executor(
+            None,
+            lambda: _sync_scenario_with_run_id(runtime, run_id, scenario_name, seed),
+        )
+    except Exception as exc:
+        event_bus.publish(
+            run_id,
+            ThinkingEvent(
+                type="error",
+                agent="system",
+                step="fatal",
+                message=f"{exc.__class__.__name__}: {exc}",
+                data={"exception": exc.__class__.__name__},
+            ),
+        )
+    finally:
+        event_bus.close(run_id)
+
+
+def _sync_scenario_with_run_id(
+    runtime, run_id: str, scenario_name: str, seed: int
+) -> None:
+    # run_scenario internally calls graph.invoke via ScenarioRunner 
+    # and handles Saving artifacts
+    runtime.run_scenario(scenario_name, seed=seed, run_id=run_id)

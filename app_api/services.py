@@ -405,7 +405,7 @@ class ControlTowerRuntime:
             ),
         )
 
-    def run_scenario(self, scenario_name: str, seed: int) -> SystemState:
+    def run_scenario(self, scenario_name: str, seed: int, run_id: str | None = None) -> SystemState:
         if scenario_name not in list_scenarios():
             raise_not_found("scenario", scenario_name)
 
@@ -414,7 +414,7 @@ class ControlTowerRuntime:
 
         try:
             self.state = self.runner.run(
-                self.state, scenario_name, seed=seed, trace_updater=on_trace_update
+                self.state, scenario_name, seed=seed, trace_updater=on_trace_update, run_id=run_id
             )
         except PendingApprovalError as exc:
             raise_conflict(str(exc), code="pending_approval")
