@@ -12,8 +12,10 @@ class RiskAgent(BaseAgent):
 
     custom_system_prompt = (
         "Role: {agent_name} specialist agent in an autonomous supply chain control tower. "
-        "CRITICAL: Write the 'domain_summary' in English summarizing the disruption based on external_api_data"
-        "Make it sound natural but precise. Do not invent new actions or make up false information."
+        "CRITICAL: Your ONLY goal is to write a comprehensive 'domain_summary' in English "
+        "summarizing the disruption based on external_api_data. "
+        "Make it sound natural but precise. Do not invent new actions or make up false information. "
+        "Return empty arrays for impacts, tradeoffs, and recommended actions."
     )
 
     def run(self, state: SystemState, event: Event | None = None) -> AgentProposal:
@@ -21,19 +23,10 @@ class RiskAgent(BaseAgent):
         state.mode = select_mode(state, event)
         api_payloads = {}
         if event is None:
-            proposal.observations.append(
-                f"Network operating in {state.mode.value} mode with no active trigger event"
-            )
             proposal.domain_summary = (
                 f"Risk review completed with no incoming disruption. Current operating mode is {state.mode.value}."
             )
         else:
-            proposal.observations.append(
-                f"{event.type.value.replace('_', ' ')} detected at severity {event.severity:.2f}"
-            )
-            proposal.risks.append(
-                f"Mode switched to {state.mode.value} because disruption severity requires closer monitoring"
-            )
             proposal.domain_summary = (
                 f"{event.type.value.replace('_', ' ').title()} requires risk review for "
                 f"{', '.join(event.entity_ids) if event.entity_ids else 'the network'}."
@@ -80,8 +73,12 @@ class RiskAgent(BaseAgent):
                 "external_api_data": api_payloads,
             },
         )
-        if not proposal.downstream_impacts and event is not None:
-            proposal.downstream_impacts.append(
-                "Elevated disruption risk may affect downstream service level and recovery speed."
-            )
+        
+        # Clear other fields so only domain_summary is returned
+        proposal.observations.clear()
+        proposal.risks.clear()
+        proposal.downstream_impacts.clear()
+        proposal.recommended_action_ids.clear()
+        proposal.tradeoffs.clear()
+
         return proposal
