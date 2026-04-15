@@ -28,7 +28,8 @@ from orchestrator.router import (
     route_after_demand,
     route_after_inventory,
     route_after_logistics,
-    route_after_critic,    route_after_planner,
+    route_after_critic,
+    route_after_planner,
     route_after_risk,
     route_after_supplier,
 )
@@ -870,4 +871,3 @@ class LangGraphControlTower:
 
 def build_graph() -> LangGraphControlTower:
     return LangGraphControlTower()
-hControlTower()
