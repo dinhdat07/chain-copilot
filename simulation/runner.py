@@ -26,7 +26,13 @@ class ScenarioRunner:
         self.graph = build_graph()
         self.store = store or SQLiteStore()
 
-    def run(self, initial_state: SystemState, scenario_name: str, seed: int = 7) -> SystemState:
+    def run(
+        self,
+        initial_state: SystemState,
+        scenario_name: str,
+        seed: int = 7,
+        trace_updater=None,
+    ) -> SystemState:
         ensure_no_pending_plan(initial_state)
         state = clone_state(initial_state)
         started = time.perf_counter()
@@ -51,9 +57,13 @@ class ScenarioRunner:
                 payload=event.payload,
             )
             self.store.save_event_envelope(envelope)
-            state = self.graph.invoke(state, event, run_id=run_id)
+            state = self.graph.invoke(
+                state, event, run_id=run_id, trace_updater=trace_updater
+            )
             decision = state.decision_logs[-1] if state.decision_logs else None
-            execution = build_execution_record(run_id=run_id, state=state, decision=decision)
+            execution = build_execution_record(
+                run_id=run_id, state=state, decision=decision
+            )
             if execution is not None:
                 self.store.save_execution_record(execution)
             run_record = build_run_record(
@@ -78,7 +88,9 @@ class ScenarioRunner:
             seed=seed,
             events=events,
             result_plan_id=state.latest_plan_id,
-            decision_id=state.decision_logs[-1].decision_id if state.decision_logs else None,
+            decision_id=state.decision_logs[-1].decision_id
+            if state.decision_logs
+            else None,
             result_kpis=state.kpis,
             duration_ms=round((time.perf_counter() - started) * 1000.0, 2),
             status="completed",

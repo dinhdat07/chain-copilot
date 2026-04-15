@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import time
-from typing import TypedDict
+from typing import Callable, TypedDict
 from uuid import uuid4
 
 from actions.executor import apply_plan
@@ -28,19 +28,18 @@ from orchestrator.router import (
     route_after_demand,
     route_after_inventory,
     route_after_logistics,
-    route_after_critic,
-
-    route_after_planner,
+    route_after_critic,    route_after_planner,
     route_after_risk,
     route_after_supplier,
 )
 
 
-class OrchestrationState(TypedDict):
+class OrchestrationState(TypedDict, total=False):
     state: SystemState
     event: Event | None
     started_at: float
     run_id: str | None
+    trace_updater: "Callable[[OrchestrationTrace], None]"
 
 
 class LangGraphControlTower:
@@ -271,14 +270,34 @@ class LangGraphControlTower:
 
     def _handoff_reason(self, from_node: str, to_node: str) -> str:
         reasons = {
-            ("demand", "inventory"): "demand analysis updates forecast and hands replenishment to inventory planning",
-            ("inventory", "planner"): "inventory planning completed and handed feasible replenishment options to the planner",
-            ("supplier", "logistics"): "supplier mitigation options were prepared and routing alternatives are needed before final planning",
-            ("supplier", "planner"): "supplier review completed and the planner can evaluate the candidate actions",
-            ("logistics", "supplier"): "routing disruption analysis completed and supplier mitigation is needed before planning",
-            ("logistics", "planner"): "routing analysis completed and the planner can score the candidate actions",
+            (
+                "demand",
+                "inventory",
+            ): "demand analysis updates forecast and hands replenishment to inventory planning",
+            (
+                "inventory",
+                "planner",
+            ): "inventory planning completed and handed feasible replenishment options to the planner",
+            (
+                "supplier",
+                "logistics",
+            ): "supplier mitigation options were prepared and routing alternatives are needed before final planning",
+            (
+                "supplier",
+                "planner",
+            ): "supplier review completed and the planner can evaluate the candidate actions",
+            (
+                "logistics",
+                "supplier",
+            ): "routing disruption analysis completed and supplier mitigation is needed before planning",
+            (
+                "logistics",
+                "planner",
+            ): "routing analysis completed and the planner can score the candidate actions",
         }
-        return reasons.get((from_node, to_node), f"{from_node} forwarded the workflow to {to_node}")
+        return reasons.get(
+            (from_node, to_node), f"{from_node} forwarded the workflow to {to_node}"
+        )
 
     def _record_output(self, state: SystemState, output) -> None:
         state.agent_outputs[output.agent] = output
@@ -296,27 +315,43 @@ class LangGraphControlTower:
             state.latest_trace.status = "completed"
         return state
 
+    def _notify_trace_update(
+        self,
+        state: SystemState,
+        trace_updater: Callable[[OrchestrationTrace], None] | None,
+    ) -> None:
+        if trace_updater and state.latest_trace:
+            trace_updater(state.latest_trace)
+
     def risk_node(self, graph_state: OrchestrationState) -> OrchestrationState:
         state = graph_state["state"]
-        event = graph_state["event"]
+        event = graph_state.get("event")
+        trace_updater = graph_state.get("trace_updater")
+
         self._emit(graph_state, type="start", agent="risk", step="init",
                    message="Starting orchestration cycle",
                    data={"mode": state.mode.value, "pending_plan": state.pending_plan is not None})
+
         self._reset_cycle(state)
         self._begin_trace(state, event)
         self._start_step(state, "risk", "agent", event)
+        self._notify_trace_update(state, trace_updater)
+
         if event is not None:
             if event.dedupe_key not in {
                 item.dedupe_key for item in state.active_events
             }:
                 state.active_events.append(event)
+        
         max_sev = max((e.severity for e in state.active_events), default=0.0)
         self._emit(graph_state, type="analysis", agent="risk", step="event_scan",
                    message=f"Risk Agent scanning {len(state.active_events)} active events",
                    data={"active_events": len(state.active_events), "max_severity": round(max_sev, 2)})
+        
         output = self.risk_agent.run(state, event)
         self._record_output(state, output)
         self._complete_agent_step(state, "risk", output)
+        
         risk_route = route_after_risk({"state": state})
         self._emit(graph_state, type="observation", agent="risk", step="proposals",
                    message=f"Risk Agent proposed {len(output.proposals)} actions",
@@ -324,6 +359,7 @@ class LangGraphControlTower:
         self._emit(graph_state, type="decision", agent="risk", step="routing",
                    message=f"Next routing → {risk_route}",
                    data={"next_node": risk_route, "reason": self._risk_route_reason(risk_route)})
+
         self._record_route(
             state,
             "risk",
@@ -333,22 +369,33 @@ class LangGraphControlTower:
         )
         if state.latest_trace is not None:
             state.latest_trace.current_branch = state.mode.value
-        return {"state": state, "event": event, "started_at": graph_state["started_at"], "run_id": graph_state.get("run_id")}
+        
+        self._notify_trace_update(state, trace_updater)
+        return {"state": state, "event": event, "started_at": graph_state["started_at"], 
+                "run_id": graph_state.get("run_id"), "trace_updater": trace_updater}
 
     def demand_node(self, graph_state: OrchestrationState) -> OrchestrationState:
         state = graph_state["state"]
+        event = graph_state.get("event")
+        trace_updater = graph_state.get("trace_updater")
+        
         sku_count = len(state.inventory)
         self._emit(graph_state, type="analysis", agent="demand", step="demand_forecast",
                    message=f"Demand Agent analyzing forecast for {sku_count} SKUs",
                    data={"sku_count": sku_count})
-        self._start_step(state, "demand", "agent", graph_state["event"])
-        output = self.demand_agent.run(state, graph_state["event"])
+        
+        self._start_step(state, "demand", "agent", event)
+        self._notify_trace_update(state, trace_updater)
+        
+        output = self.demand_agent.run(state, event)
         self._record_output(state, output)
         self._complete_agent_step(state, "demand", output)
+        
         next_node = route_after_demand({"state": state})
         self._emit(graph_state, type="observation", agent="demand", step="demand_done",
                    message=f"Demand analysis completed — moving to {next_node}",
                    data={"proposals": len(output.proposals), "observations": output.observations[:2]})
+        
         self._record_route(
             state,
             "demand",
@@ -356,10 +403,14 @@ class LangGraphControlTower:
             next_node,
             self._handoff_reason("demand", next_node),
         )
+        self._notify_trace_update(state, trace_updater)
         return {**graph_state, "run_id": graph_state.get("run_id")}
 
     def inventory_node(self, graph_state: OrchestrationState) -> OrchestrationState:
         state = graph_state["state"]
+        event = graph_state.get("event")
+        trace_updater = graph_state.get("trace_updater")
+        
         critical_skus = sum(
             1 for item in state.inventory.values()
             if item.on_hand + item.incoming_qty - item.forecast_qty < item.reorder_point
@@ -367,10 +418,14 @@ class LangGraphControlTower:
         self._emit(graph_state, type="analysis", agent="inventory", step="stock_check",
                    message=f"Inventory Agent checking {len(state.inventory)} SKUs",
                    data={"sku_count": len(state.inventory), "critical_skus": critical_skus})
-        self._start_step(state, "inventory", "agent", graph_state["event"])
-        output = self.inventory_agent.run(state, graph_state["event"])
+        
+        self._start_step(state, "inventory", "agent", event)
+        self._notify_trace_update(state, trace_updater)
+        
+        output = self.inventory_agent.run(state, event)
         self._record_output(state, output)
         self._complete_agent_step(state, "inventory", output)
+        
         next_node = route_after_inventory({"state": state})
         below_safety = sum(
             1 for item in state.inventory.values()
@@ -379,6 +434,7 @@ class LangGraphControlTower:
         self._emit(graph_state, type="observation", agent="inventory", step="inventory_done",
                    message=f"Identified {below_safety} SKUs below safety stock — moving to {next_node}",
                    data={"proposals": len(output.proposals), "below_safety": below_safety})
+        
         self._record_route(
             state,
             "inventory",
@@ -386,22 +442,31 @@ class LangGraphControlTower:
             next_node,
             self._handoff_reason("inventory", next_node),
         )
+        self._notify_trace_update(state, trace_updater)
         return {**graph_state, "run_id": graph_state.get("run_id")}
 
     def supplier_node(self, graph_state: OrchestrationState) -> OrchestrationState:
         state = graph_state["state"]
+        event = graph_state.get("event")
+        trace_updater = graph_state.get("trace_updater")
+        
         supplier_count = len(state.suppliers)
         self._emit(graph_state, type="analysis", agent="supplier", step="supplier_scan",
                    message=f"Supplier Agent evaluating {supplier_count} suppliers",
                    data={"supplier_count": supplier_count})
-        self._start_step(state, "supplier", "agent", graph_state["event"])
-        output = self.supplier_agent.run(state, graph_state["event"])
+        
+        self._start_step(state, "supplier", "agent", event)
+        self._notify_trace_update(state, trace_updater)
+        
+        output = self.supplier_agent.run(state, event)
         self._record_output(state, output)
         self._complete_agent_step(state, "supplier", output)
+        
         next_node = route_after_supplier({"state": state})
         self._emit(graph_state, type="observation", agent="supplier", step="supplier_done",
                    message=f"Supplier Agent proposed {len(output.proposals)} actions — moving to {next_node}",
                    data={"proposals": len(output.proposals), "observations": output.observations[:2]})
+        
         self._record_route(
             state,
             "supplier",
@@ -409,22 +474,31 @@ class LangGraphControlTower:
             next_node,
             self._handoff_reason("supplier", next_node),
         )
+        self._notify_trace_update(state, trace_updater)
         return {**graph_state, "run_id": graph_state.get("run_id")}
 
     def logistics_node(self, graph_state: OrchestrationState) -> OrchestrationState:
         state = graph_state["state"]
+        event = graph_state.get("event")
+        trace_updater = graph_state.get("trace_updater")
+        
         route_count = len(state.routes)
         self._emit(graph_state, type="analysis", agent="logistics", step="route_scan",
                    message=f"Logistics Agent checking {route_count} transport routes",
                    data={"route_count": route_count})
-        self._start_step(state, "logistics", "agent", graph_state["event"])
-        output = self.logistics_agent.run(state, graph_state["event"])
+        
+        self._start_step(state, "logistics", "agent", event)
+        self._notify_trace_update(state, trace_updater)
+        
+        output = self.logistics_agent.run(state, event)
         self._record_output(state, output)
         self._complete_agent_step(state, "logistics", output)
+        
         next_node = route_after_logistics({"state": state})
         self._emit(graph_state, type="observation", agent="logistics", step="logistics_done",
                    message=f"Logistics Agent proposed {len(output.proposals)} actions — moving to {next_node}",
                    data={"proposals": len(output.proposals), "observations": output.observations[:2]})
+        
         self._record_route(
             state,
             "logistics",
@@ -432,10 +506,14 @@ class LangGraphControlTower:
             next_node,
             self._handoff_reason("logistics", next_node),
         )
+        self._notify_trace_update(state, trace_updater)
         return {**graph_state, "run_id": graph_state.get("run_id")}
 
     def planner_node(self, graph_state: OrchestrationState) -> OrchestrationState:
         state = graph_state["state"]
+        event = graph_state.get("event")
+        trace_updater = graph_state.get("trace_updater")
+        
         candidate_count = len(state.candidate_actions)
         self._emit(graph_state, type="thinking", agent="planner", step="strategy_init",
                    message="Planner generating 3 strategies: cost_first, balanced, resilience_first",
@@ -443,8 +521,11 @@ class LangGraphControlTower:
         self._emit(graph_state, type="thinking", agent="planner", step="simulation",
                    message="Running simulations for each strategy",
                    data={"candidate_actions": candidate_count})
-        self._start_step(state, "planner", "agent", graph_state["event"])
-        output = self.planner_agent.run(state, graph_state["event"])
+        
+        self._start_step(state, "planner", "agent", event)
+        self._notify_trace_update(state, trace_updater)
+        
+        output = self.planner_agent.run(state, event)
         self._record_output(state, output)
         self._update_trace_from_plan(state)
         latest_decision = state.decision_logs[-1] if state.decision_logs else None
@@ -534,12 +615,18 @@ class LangGraphControlTower:
             "critic",
             "planner always forwards candidate plans to the critic",
         )
+        self._notify_trace_update(state, trace_updater)
         return {**graph_state, "run_id": graph_state.get("run_id")}
 
     def critic_node(self, graph_state: OrchestrationState) -> OrchestrationState:
         state = graph_state["state"]
-        self._start_step(state, "critic", "agent", graph_state["event"])
-        output = self.critic_agent.run(state, graph_state["event"])
+        event = graph_state.get("event")
+        trace_updater = graph_state.get("trace_updater")
+        
+        self._start_step(state, "critic", "agent", event)
+        self._notify_trace_update(state, trace_updater)
+        
+        output = self.critic_agent.run(state, event)
         state.agent_outputs[output.agent] = output
         self._complete_step(
             state,
@@ -574,22 +661,31 @@ class LangGraphControlTower:
             critic_route,
             self._critic_route_reason(state, critic_route),
         )
+        self._notify_trace_update(state, trace_updater)
         return {**graph_state, "run_id": graph_state.get("run_id")}
 
     def approval_node(self, graph_state: OrchestrationState) -> OrchestrationState:
         state = graph_state["state"]
+        event = graph_state.get("event")
+        trace_updater = graph_state.get("trace_updater")
+        
         approval_reason = state.latest_plan.approval_reason if state.latest_plan else "approval required"
         decision_id = state.decision_logs[-1].decision_id if state.decision_logs else None
+        
         self._emit(graph_state, type="decision", agent="system", step="approval_gate",
                    message=f"Plan awaiting manual approval: {approval_reason}",
                    data={"reason": approval_reason, "decision_id": decision_id})
-        self._start_step(state, "approval", "gate", graph_state["event"])
+        
+        self._start_step(state, "approval", "gate", event)
+        self._notify_trace_update(state, trace_updater)
+        
         state.mode = Mode.APPROVAL
         self._update_trace_from_plan(state)
         if state.latest_trace is not None:
             state.latest_trace.terminal_stage = "approval"
             state.latest_trace.execution_status = "pending_approval"
             state.latest_trace.approval_pending = True
+        
         self._complete_step(
             state,
             node_key="approval",
@@ -604,6 +700,7 @@ class LangGraphControlTower:
             },
         )
         state = self._finalize(state, graph_state["started_at"])
+        
         self._emit(graph_state, type="final", agent="system", step="complete",
                    message="Orchestration complete — plan awaiting approval",
                    data={
@@ -611,22 +708,29 @@ class LangGraphControlTower:
                        "plan_id": state.latest_plan.plan_id if state.latest_plan else None,
                        "mode": state.mode.value,
                    })
+        self._notify_trace_update(state, trace_updater)
         return {
             "state": state,
-            "event": graph_state["event"],
+            "event": event,
             "started_at": graph_state["started_at"],
             "run_id": graph_state.get("run_id"),
+            "trace_updater": trace_updater,
         }
 
     def execution_node(self, graph_state: OrchestrationState) -> OrchestrationState:
         state = graph_state["state"]
-        event = graph_state["event"]
+        event = graph_state.get("event")
+        trace_updater = graph_state.get("trace_updater")
+        
         plan_id = state.latest_plan.plan_id if state.latest_plan else None
         self._emit(graph_state, type="action", agent="system", step="execute",
                    message=f"Executing plan '{plan_id or 'N/A'}'",
                    data={"plan_id": plan_id,
                          "action_count": len(state.latest_plan.actions) if state.latest_plan else 0})
+        
         self._start_step(state, "execution", "execution", event)
+        self._notify_trace_update(state, trace_updater)
+        
         execution_summary = "no plan executed"
         execution_status = "no_op"
         if state.latest_plan and not state.latest_plan.approval_required:
@@ -640,11 +744,13 @@ class LangGraphControlTower:
                 f"{state.latest_plan.strategy_label or 'unlabeled'} strategy"
             )
             execution_status = "auto_applied"
+        
         self._update_trace_from_plan(state)
         if state.latest_trace is not None:
             state.latest_trace.terminal_stage = "execution"
             state.latest_trace.execution_status = execution_status
             state.latest_trace.approval_pending = False
+            
         self._complete_step(
             state,
             node_key="execution",
@@ -657,6 +763,7 @@ class LangGraphControlTower:
             },
         )
         state = self._finalize(state, graph_state["started_at"])
+        
         self._emit(graph_state, type="final", agent="system", step="complete",
                    message=f"Orchestration complete — {execution_status}",
                    data={
@@ -664,7 +771,9 @@ class LangGraphControlTower:
                        "plan_id": state.latest_plan_id,
                        "mode": state.mode.value,
                    })
-        return {"state": state, "event": event, "started_at": graph_state["started_at"], "run_id": graph_state.get("run_id")}
+        self._notify_trace_update(state, trace_updater)
+        return {"state": state, "event": event, "started_at": graph_state["started_at"], 
+                "run_id": graph_state.get("run_id"), "trace_updater": trace_updater}
 
     def _compile(self):
         graph = StateGraph(OrchestrationState)
@@ -740,7 +849,11 @@ class LangGraphControlTower:
         return graph.compile()
 
     def invoke(
-        self, state: SystemState, event: Event | None = None, run_id: str | None = None
+        self,
+        state: SystemState,
+        event: Event | None = None,
+        run_id: str | None = None,
+        trace_updater: Callable[[OrchestrationTrace], None] | None = None,
     ) -> SystemState:
         state.run_id = run_id or new_run_id()
         result = self.graph.invoke(
@@ -749,6 +862,7 @@ class LangGraphControlTower:
                 "event": event,
                 "started_at": time.perf_counter(),
                 "run_id": state.run_id,
+                "trace_updater": trace_updater,
             }
         )
         return result["state"]
@@ -756,3 +870,4 @@ class LangGraphControlTower:
 
 def build_graph() -> LangGraphControlTower:
     return LangGraphControlTower()
+hControlTower()
