@@ -25,8 +25,8 @@ class RunEventBus:
     """
 
     def __init__(self) -> None:
-        # dict[run_id → list of subscriber queues]
-        self._queues: dict[str, list[asyncio.Queue]] = defaultdict(list)
+        # dict[run_id → list of (loop, subscriber queue)]
+        self._queues: dict[str, list[tuple[asyncio.AbstractEventLoop, asyncio.Queue]]] = defaultdict(list)
         # sequence counter per run_id
         self._seq: dict[str, int] = defaultdict(int)
 
@@ -44,11 +44,12 @@ class RunEventBus:
         event.run_id = run_id
         self._seq[run_id] += 1
         event.sequence = self._seq[run_id]
-        for q in list(self._queues.get(run_id, [])):
+        for loop, q in list(self._queues.get(run_id, [])):
+            if q.full():
+                continue
             try:
-                q.put_nowait(event)
-            except asyncio.QueueFull:
-                # If subscriber is too slow — discard instead of blocking
+                loop.call_soon_threadsafe(q.put_nowait, event)
+            except Exception:
                 pass
 
     def close(self, run_id: str) -> None:
@@ -56,10 +57,12 @@ class RunEventBus:
         Sends sentinel None into each queue to signal end-of-stream.
         Subscribers will exit the loop upon receiving None.
         """
-        for q in list(self._queues.get(run_id, [])):
+        for loop, q in list(self._queues.get(run_id, [])):
+            if q.full():
+                continue
             try:
-                q.put_nowait(None)
-            except asyncio.QueueFull:
+                loop.call_soon_threadsafe(q.put_nowait, None)
+            except Exception:
                 pass
         # Clean up sequence counter
         self._seq.pop(run_id, None)
@@ -78,8 +81,12 @@ class RunEventBus:
 
         Automatically cleans up the queue upon exit.
         """
+        import time
+        loop = asyncio.get_running_loop()
         q: asyncio.Queue[ThinkingEvent | None] = asyncio.Queue(maxsize=512)
-        self._queues[run_id].append(q)
+        subscriber_tuple = (loop, q)
+        self._queues[run_id].append(subscriber_tuple)
+        last_yield = 0.0
         try:
             while True:
                 try:
@@ -90,13 +97,21 @@ class RunEventBus:
                 if event is None:
                     # Sentinel — stream ended normally
                     break
+                
+                # Pace the events so UI doesn't get flooded in exactly the same millisecond
+                now = time.time()
+                elapsed = now - last_yield
+                if elapsed < 0.5:
+                    await asyncio.sleep(0.5 - elapsed)
+                last_yield = time.time()
+                
                 yield event
         finally:
             # Cleanup: remove queue from subscriber list
             queues = self._queues.get(run_id)
             if queues is not None:
                 try:
-                    queues.remove(q)
+                    queues.remove(subscriber_tuple)
                 except ValueError:
                     pass
                 if not queues:
@@ -117,3 +132,5 @@ class RunEventBus:
 
 # Singleton — import and use directly from any module
 event_bus = RunEventBus()
+
+
