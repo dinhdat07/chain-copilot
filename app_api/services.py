@@ -9,7 +9,15 @@ from fastapi import HTTPException
 
 from core.enums import ApprovalStatus, EventType
 from core.memory import SQLiteStore
-from core.models import Action, ConstraintViolation, DecisionLog, Event, OrchestrationTrace, Plan, SystemState
+from core.models import (
+    Action,
+    ConstraintViolation,
+    DecisionLog,
+    Event,
+    OrchestrationTrace,
+    Plan,
+    SystemState,
+)
 from core.runtime_records import (
     EventClass,
     EventEnvelope,
@@ -53,7 +61,10 @@ from execution.dispatch_service import ActionDispatchService
 from execution.models import (
     ExecutionRecord as ActionExecutionRecord,
 )
-from execution.state_machine import compute_overall_progress, compute_plan_execution_status
+from execution.state_machine import (
+    compute_overall_progress,
+    compute_plan_execution_status,
+)
 
 from app_api.schemas import (
     ActionView,
@@ -76,6 +87,8 @@ from app_api.schemas import (
     KPIView,
     PendingApprovalView,
     PlanView,
+    ProjectedStateSummaryView,
+    ProjectionStepView,
     ReflectionView,
     RunView,
     RouteDecisionView,
@@ -191,7 +204,9 @@ class ControlTowerRuntime:
             return None
         return ExecutionRecord.model_validate(payload)
 
-    def _latest_execution_for_decision(self, decision_id: str) -> ExecutionRecord | None:
+    def _latest_execution_for_decision(
+        self, decision_id: str
+    ) -> ExecutionRecord | None:
         matching_runs = [
             item
             for item in self.store.list_run_records(limit=None)
@@ -247,8 +262,12 @@ class ControlTowerRuntime:
     def legacy_response_payload(self) -> dict[str, Any]:
         return {
             "summary": state_summary(self.state),
-            "latest_plan": self.state.latest_plan.model_dump(mode="json") if self.state.latest_plan else None,
-            "pending_plan": self.state.pending_plan.model_dump(mode="json") if self.state.pending_plan else None,
+            "latest_plan": self.state.latest_plan.model_dump(mode="json")
+            if self.state.latest_plan
+            else None,
+            "pending_plan": self.state.pending_plan.model_dump(mode="json")
+            if self.state.pending_plan
+            else None,
             "decision_id": self.current_decision_id(),
         }
 
@@ -256,8 +275,18 @@ class ControlTowerRuntime:
         started_at = utc_now()
         parent_run_id = self.state.run_id
         run_id = new_run_id()
+
+        def on_trace_update(trace):
+            self.state.latest_trace = trace
+
         try:
-            self.state = run_daily_plan(self.state, self.store, graph=self.graph, run_id=run_id)
+            self.state = run_daily_plan(
+                self.state,
+                self.store,
+                graph=self.graph,
+                run_id=run_id,
+                trace_updater=on_trace_update,
+            )
         except PendingApprovalError as exc:
             raise_conflict(str(exc), code="pending_approval")
         self._persist_runtime_artifacts(
@@ -297,10 +326,14 @@ class ControlTowerRuntime:
         )
         return self.state
 
-    def ingest_envelope(self, request: EventIngestRequest) -> tuple[EventEnvelope, RunRecord | None, ExecutionRecord | None]:
+    def ingest_envelope(
+        self, request: EventIngestRequest
+    ) -> tuple[EventEnvelope, RunRecord | None, ExecutionRecord | None]:
         occurred_at = request.occurred_at or utc_now()
         ingested_at = utc_now()
-        correlation_id = request.correlation_id or new_correlation_id(request.event_class.value)
+        correlation_id = request.correlation_id or new_correlation_id(
+            request.event_class.value
+        )
         envelope = EventEnvelope(
             event_id=new_event_envelope_id(),
             event_class=request.event_class,
@@ -310,7 +343,8 @@ class ControlTowerRuntime:
             ingested_at=ingested_at,
             correlation_id=correlation_id,
             causation_id=request.causation_id,
-            idempotency_key=request.idempotency_key or f"{request.event_type}:{request.entity_ids}:{request.payload}",
+            idempotency_key=request.idempotency_key
+            or f"{request.event_type}:{request.entity_ids}:{request.payload}",
             severity=request.severity,
             entity_ids=request.entity_ids,
             payload=request.payload,
@@ -332,16 +366,21 @@ class ControlTowerRuntime:
                 )
             run_id = new_run_id()
             try:
-                self.state = run_daily_plan(self.state, self.store, graph=self.graph, run_id=run_id)
+                self.state = run_daily_plan(
+                    self.state, self.store, graph=self.graph, run_id=run_id
+                )
             except PendingApprovalError as exc:
                 raise_conflict(str(exc), code="pending_approval")
-            return (envelope, *self._persist_runtime_artifacts(
-                run_id=run_id,
-                run_type=RunType.DAILY_CYCLE,
-                started_at=started_at,
-                parent_run_id=parent_run_id,
-                envelope=envelope,
-            ))
+            return (
+                envelope,
+                *self._persist_runtime_artifacts(
+                    run_id=run_id,
+                    run_type=RunType.DAILY_CYCLE,
+                    started_at=started_at,
+                    parent_run_id=parent_run_id,
+                    envelope=envelope,
+                ),
+            )
         try:
             event = build_event_from_envelope(envelope)
         except ValueError as exc:
@@ -355,19 +394,28 @@ class ControlTowerRuntime:
             ) from exc
         run_id = new_run_id()
         self.state = self.graph.invoke(self.state, event, run_id=run_id)
-        return (envelope, *self._persist_runtime_artifacts(
-            run_id=run_id,
-            run_type=RunType.EVENT_RESPONSE,
-            started_at=started_at,
-            parent_run_id=parent_run_id,
-            envelope=envelope,
-        ))
+        return (
+            envelope,
+            *self._persist_runtime_artifacts(
+                run_id=run_id,
+                run_type=RunType.EVENT_RESPONSE,
+                started_at=started_at,
+                parent_run_id=parent_run_id,
+                envelope=envelope,
+            ),
+        )
 
-    def run_scenario(self, scenario_name: str, seed: int) -> SystemState:
+    def run_scenario(self, scenario_name: str, seed: int, run_id: str | None = None) -> SystemState:
         if scenario_name not in list_scenarios():
             raise_not_found("scenario", scenario_name)
+
+        def on_trace_update(trace):
+            self.state.latest_trace = trace
+
         try:
-            self.state = self.runner.run(self.state, scenario_name, seed=seed)
+            self.state = self.runner.run(
+                self.state, scenario_name, seed=seed, trace_updater=on_trace_update, run_id=run_id
+            )
         except PendingApprovalError as exc:
             raise_conflict(str(exc), code="pending_approval")
         return self.state
@@ -381,11 +429,15 @@ class ControlTowerRuntime:
         if parent_execution is None:
             parent_execution = self.latest_execution()
         if parent_execution is None:
-            parent_execution = self._execution_for_id(self._parent_execution_id(parent_run_id))
+            parent_execution = self._execution_for_id(
+                self._parent_execution_id(parent_run_id)
+            )
         execution_record: ExecutionRecord | None = None
         try:
             if action == "approve":
-                self.state = approve_pending_plan(self.state, self.store, decision_id, True, run_id=run_id)
+                self.state = approve_pending_plan(
+                    self.state, self.store, decision_id, True, run_id=run_id
+                )
                 decision = self._latest_decision()
                 if parent_execution is not None:
                     execution_record = advance_execution_record(
@@ -397,7 +449,9 @@ class ControlTowerRuntime:
                         reason="operator approved execution; awaiting dispatch",
                     )
             elif action == "reject":
-                self.state = approve_pending_plan(self.state, self.store, decision_id, False, run_id=run_id)
+                self.state = approve_pending_plan(
+                    self.state, self.store, decision_id, False, run_id=run_id
+                )
                 decision = self._latest_decision()
                 if parent_execution is not None:
                     execution_record = advance_execution_record(
@@ -409,7 +463,9 @@ class ControlTowerRuntime:
                         reason="operator rejected the pending execution",
                     )
             elif action == "safer_plan":
-                self.state = request_safer_plan(self.state, self.store, decision_id, run_id=run_id)
+                self.state = request_safer_plan(
+                    self.state, self.store, decision_id, run_id=run_id
+                )
                 decision = self._latest_decision()
                 if parent_execution is not None:
                     cancelled = advance_execution_record(
@@ -447,7 +503,9 @@ class ControlTowerRuntime:
         )
         return self.state
 
-    def select_approval_alternative(self, decision_id: str, strategy_label: str) -> SystemState:
+    def select_approval_alternative(
+        self, decision_id: str, strategy_label: str
+    ) -> SystemState:
         started_at = utc_now()
         parent_run_id = self.state.run_id
         run_id = new_run_id()
@@ -457,7 +515,9 @@ class ControlTowerRuntime:
         if parent_execution is None:
             parent_execution = self.latest_execution()
         if parent_execution is None:
-            parent_execution = self._execution_for_id(self._parent_execution_id(parent_run_id))
+            parent_execution = self._execution_for_id(
+                self._parent_execution_id(parent_run_id)
+            )
 
         execution_record: ExecutionRecord | None = None
         try:
@@ -511,7 +571,9 @@ class ControlTowerRuntime:
         return {
             "scenario_name": scenario_name,
             "summary": state_summary(simulated),
-            "latest_plan": simulated.latest_plan.model_dump(mode="json") if simulated.latest_plan else None,
+            "latest_plan": simulated.latest_plan.model_dump(mode="json")
+            if simulated.latest_plan
+            else None,
         }
 
     def dispatch_plan(self, plan_id: str, mode: str) -> dict[str, Any]:
@@ -528,25 +590,32 @@ class ControlTowerRuntime:
             existing_records = [
                 ActionExecutionRecord.model_validate(item)
                 for item in self.store.list_action_execution_records(limit=None)
-                if item.get("plan_id") == plan_id and item.get("dispatch_mode", "dry_run") == mode
+                if item.get("plan_id") == plan_id
+                and item.get("dispatch_mode", "dry_run") == mode
             ]
             if existing_records:
                 existing_records.sort(key=lambda record: record.created_at)
                 return {
                     "plan_id": plan_id,
                     "dispatch_mode": mode,
-                    "plan_execution_status": compute_plan_execution_status(existing_records).value,
+                    "plan_execution_status": compute_plan_execution_status(
+                        existing_records
+                    ).value,
                     "overall_progress": compute_overall_progress(existing_records),
-                    "records": [action_execution_record_view(r) for r in existing_records],
+                    "records": [
+                        action_execution_record_view(r) for r in existing_records
+                    ],
                     "compensation_hints": [],
                 }
 
         summary = self.dispatch_service.dispatch_plan(plan, mode=mode)
-        
+
         # Persist only commit-mode records; dry-run is preview-only.
         if mode == "commit":
             for record in summary.records:
-                self.store.save_action_execution_record(record.execution_id, record.model_dump(mode="json"))
+                self.store.save_action_execution_record(
+                    record.execution_id, record.model_dump(mode="json")
+                )
 
         # Mapping to PlanDispatchResponse format
         return {
@@ -558,7 +627,9 @@ class ControlTowerRuntime:
             "compensation_hints": summary.compensation_hints,
         }
 
-    def update_execution_progress(self, execution_id: str, percentage: float) -> ActionExecutionRecordView:
+    def update_execution_progress(
+        self, execution_id: str, percentage: float
+    ) -> ActionExecutionRecordView:
         payload = self.store.get_action_execution_record(execution_id)
         if payload is None:
             # Fallback for old/missing records
@@ -576,8 +647,10 @@ class ControlTowerRuntime:
         record.set_progress(percentage)
         if percentage >= 100.0:
             record.mark_completed()
-        
-        self.store.save_action_execution_record(record.execution_id, record.model_dump(mode="json"))
+
+        self.store.save_action_execution_record(
+            record.execution_id, record.model_dump(mode="json")
+        )
         return action_execution_record_view(record)
 
     def complete_execution(self, execution_id: str) -> ActionExecutionRecordView:
@@ -612,9 +685,18 @@ def service_flags_view() -> ServiceFlagsView:
 
 
 def service_metrics_view(runtime: ControlTowerRuntime) -> ServiceMetricsView:
-    runs = [RunRecord.model_validate(item) for item in runtime.store.list_run_records(limit=None)]
-    traces = [OrchestrationTrace.model_validate(item) for item in runtime.store.list_traces(limit=None)]
-    executions = [ExecutionRecord.model_validate(item) for item in runtime.store.list_execution_records(limit=None)]
+    runs = [
+        RunRecord.model_validate(item)
+        for item in runtime.store.list_run_records(limit=None)
+    ]
+    traces = [
+        OrchestrationTrace.model_validate(item)
+        for item in runtime.store.list_traces(limit=None)
+    ]
+    executions = [
+        ExecutionRecord.model_validate(item)
+        for item in runtime.store.list_execution_records(limit=None)
+    ]
     total_runs = len(runs)
     completed_runs = sum(1 for item in runs if item.status == RunStatus.COMPLETED)
     failed_runs = sum(1 for item in runs if item.status == RunStatus.FAILED)
@@ -628,14 +710,17 @@ def service_metrics_view(runtime: ControlTowerRuntime) -> ServiceMetricsView:
     approval_count = sum(
         1
         for item in runs
-        if item.approval_status in {
+        if item.approval_status
+        in {
             ApprovalStatus.PENDING.value,
             ApprovalStatus.APPROVED.value,
             ApprovalStatus.REJECTED.value,
         }
     )
     execution_failures = sum(
-        1 for item in executions if item.status in {ExecutionStatus.FAILED, ExecutionStatus.ROLLED_BACK}
+        1
+        for item in executions
+        if item.status in {ExecutionStatus.FAILED, ExecutionStatus.ROLLED_BACK}
     )
     return ServiceMetricsView(
         total_runs=total_runs,
@@ -652,7 +737,9 @@ def service_metrics_view(runtime: ControlTowerRuntime) -> ServiceMetricsView:
         if total_runs
         else 0.0,
         approval_rate=round(approval_count / total_runs, 4) if total_runs else 0.0,
-        execution_failure_rate=round(execution_failures / len(executions), 4) if executions else 0.0,
+        execution_failure_rate=round(execution_failures / len(executions), 4)
+        if executions
+        else 0.0,
         latest_run_id=runs[0].run_id if runs else None,
     )
 
@@ -669,7 +756,9 @@ def kpi_view(kpis) -> KPIView:
 
 
 def event_envelope_view(item: EventEnvelope | dict) -> EventEnvelopeView:
-    payload = item if isinstance(item, EventEnvelope) else EventEnvelope.model_validate(item)
+    payload = (
+        item if isinstance(item, EventEnvelope) else EventEnvelope.model_validate(item)
+    )
     return EventEnvelopeView(**payload.model_dump(mode="json"))
 
 
@@ -683,17 +772,33 @@ def run_record_list_view(items: list[RunRecord | dict]) -> list[RunView]:
 
 
 def execution_record_view(item: ExecutionRecord | dict) -> ExecutionRecordView:
-    payload = item if isinstance(item, ExecutionRecord) else ExecutionRecord.model_validate(item)
+    payload = (
+        item
+        if isinstance(item, ExecutionRecord)
+        else ExecutionRecord.model_validate(item)
+    )
     return ExecutionRecordView(**payload.model_dump(mode="json"))
 
 
-def action_execution_record_view(item: ActionExecutionRecord | dict) -> ActionExecutionRecordView:
-    payload = item if isinstance(item, ActionExecutionRecord) else ActionExecutionRecord.model_validate(item)
+def action_execution_record_view(
+    item: ActionExecutionRecord | dict,
+) -> ActionExecutionRecordView:
+    payload = (
+        item
+        if isinstance(item, ActionExecutionRecord)
+        else ActionExecutionRecord.model_validate(item)
+    )
     return ActionExecutionRecordView(**payload.model_dump(mode="json"))
 
 
-def historical_control_tower_state(state_snapshot: SystemState | dict) -> ControlTowerStateResponse:
-    state = state_snapshot if isinstance(state_snapshot, SystemState) else SystemState.model_validate(state_snapshot)
+def historical_control_tower_state(
+    state_snapshot: SystemState | dict,
+) -> ControlTowerStateResponse:
+    state = (
+        state_snapshot
+        if isinstance(state_snapshot, SystemState)
+        else SystemState.model_validate(state_snapshot)
+    )
     return control_tower_state(state)
 
 
@@ -725,7 +830,28 @@ def constraint_violation_view(item: ConstraintViolation) -> ConstraintViolationV
     return ConstraintViolationView(**item.model_dump(mode="json"))
 
 
-def plan_view(plan: Plan | None, decision: DecisionLog | None = None) -> PlanView | None:
+def projection_step_view(item) -> ProjectionStepView:
+    return ProjectionStepView(
+        step_index=item.step_index,
+        label=item.label,
+        kpis=kpi_view(item.kpis),
+        event_severity=item.event_severity,
+        inventory_at_risk=item.inventory_at_risk,
+        inventory_out_of_stock=item.inventory_out_of_stock,
+        backlog_units=item.backlog_units,
+        inbound_units_due=item.inbound_units_due,
+        summary=item.summary,
+        key_changes=item.key_changes,
+    )
+
+
+def projected_state_summary_view(item) -> ProjectedStateSummaryView:
+    return ProjectedStateSummaryView(**item.model_dump(mode="json"))
+
+
+def plan_view(
+    plan: Plan | None, decision: DecisionLog | None = None
+) -> PlanView | None:
     if plan is None:
         return None
     return PlanView(
@@ -742,7 +868,9 @@ def plan_view(plan: Plan | None, decision: DecisionLog | None = None) -> PlanVie
         generated_by=plan.generated_by,
         approval_required=plan.approval_required,
         approval_reason=plan.approval_reason,
-        approval_status=decision.approval_status.value if decision else ApprovalStatus.NOT_REQUIRED.value,
+        approval_status=decision.approval_status.value
+        if decision
+        else ApprovalStatus.NOT_REQUIRED.value,
         planner_reasoning=plan.planner_reasoning,
         llm_planner_narrative=plan.llm_planner_narrative,
         critic_summary=plan.critic_summary,
@@ -777,8 +905,21 @@ def candidate_evaluation_view(item) -> CandidateEvaluationView:
         score=item.score,
         score_breakdown=item.score_breakdown,
         projected_kpis=kpi_view(item.projected_kpis),
+        worst_case_kpis=kpi_view(item.worst_case_kpis)
+        if item.worst_case_kpis is not None
+        else None,
+        simulation_horizon_days=item.simulation_horizon_days,
+        projection_steps=[projection_step_view(step) for step in item.projection_steps],
+        projected_state_summary=(
+            projected_state_summary_view(item.projected_state_summary)
+            if item.projected_state_summary is not None
+            else None
+        ),
+        projection_summary=item.projection_summary,
         feasible=item.feasible,
-        violations=[constraint_violation_view(violation) for violation in item.violations],
+        violations=[
+            constraint_violation_view(violation) for violation in item.violations
+        ],
         mode_rationale=item.mode_rationale,
         approval_required=item.approval_required,
         approval_reason=item.approval_reason,
@@ -818,7 +959,10 @@ def decision_detail_view(item: DecisionLog) -> DecisionLogDetailView:
         score_breakdown=item.score_breakdown,
         selected_actions=item.selected_actions,
         rejected_actions=item.rejected_actions,
-        candidate_evaluations=[candidate_evaluation_view(eval_item) for eval_item in item.candidate_evaluations],
+        candidate_evaluations=[
+            candidate_evaluation_view(eval_item)
+            for eval_item in item.candidate_evaluations
+        ],
         critic_summary=item.critic_summary,
         critic_findings=item.critic_findings,
         llm_used=item.llm_used,
@@ -876,7 +1020,11 @@ def _committed_qty_within_lt(state: SystemState, item) -> int:
 
 
 def _inventory_position(state: SystemState, item) -> float:
-    return item.on_hand + _expected_inbound_within_lt(state, item) - _committed_qty_within_lt(state, item)
+    return (
+        item.on_hand
+        + _expected_inbound_within_lt(state, item)
+        - _committed_qty_within_lt(state, item)
+    )
 
 
 def _dynamic_safety_stock(state: SystemState, item) -> float:
@@ -915,7 +1063,9 @@ def _inventory_status(state: SystemState, item) -> str:
     return "in_stock"
 
 
-def inventory_rows(state: SystemState, *, search: str | None = None, status: str | None = None) -> list[InventoryRowView]:
+def inventory_rows(
+    state: SystemState, *, search: str | None = None, status: str | None = None
+) -> list[InventoryRowView]:
     needle = (search or "").strip().lower()
     status_filter = (status or "").strip().lower()
     rows: list[InventoryRowView] = []
@@ -969,7 +1119,9 @@ def _supplier_tradeoff(state: SystemState, supplier_id: str, sku: str) -> str:
     return "balanced option"
 
 
-def supplier_rows(state: SystemState, *, sku: str | None = None, status: str | None = None) -> list[SupplierRowView]:
+def supplier_rows(
+    state: SystemState, *, sku: str | None = None, status: str | None = None
+) -> list[SupplierRowView]:
     target_sku = (sku or "").strip().lower()
     target_status = (status or "").strip().lower()
     items: list[SupplierRowView] = []
@@ -1032,7 +1184,9 @@ def pending_approval_view(state: SystemState) -> PendingApprovalView | None:
         return None
     decision = state.decision_logs[-1]
     can_request_safer = state.pending_plan.generated_by != "operator_safer_request"
-    allowed_actions = ["approve", "reject"] + (["safer_plan"] if can_request_safer else [])
+    allowed_actions = ["approve", "reject"] + (
+        ["safer_plan"] if can_request_safer else []
+    )
     return PendingApprovalView(
         decision_id=decision.decision_id,
         approval_status=decision.approval_status.value,
@@ -1049,12 +1203,23 @@ def pending_approval_view(state: SystemState) -> PendingApprovalView | None:
 
 def approval_detail_view(state: SystemState, decision_id: str) -> ApprovalDetailView:
     decision = find_decision(state, decision_id)
-    plan = state.pending_plan if state.pending_plan and state.pending_plan.plan_id == decision.plan_id else state.latest_plan
+    plan = (
+        state.pending_plan
+        if state.pending_plan and state.pending_plan.plan_id == decision.plan_id
+        else state.latest_plan
+    )
     if plan is None or plan.plan_id != decision.plan_id:
         plan = None
-    pending = state.pending_plan is not None and state.pending_plan.plan_id == decision.plan_id
-    can_request_safer = not pending or state.pending_plan.generated_by != "operator_safer_request"
-    allowed_actions = ["approve", "reject"] + (["safer_plan"] if can_request_safer else [])
+    pending = (
+        state.pending_plan is not None
+        and state.pending_plan.plan_id == decision.plan_id
+    )
+    can_request_safer = (
+        not pending or state.pending_plan.generated_by != "operator_safer_request"
+    )
+    allowed_actions = ["approve", "reject"] + (
+        ["safer_plan"] if can_request_safer else []
+    )
     return ApprovalDetailView(
         decision_id=decision.decision_id,
         plan_id=decision.plan_id,
@@ -1124,11 +1289,20 @@ def latest_trace_view(state: SystemState) -> TraceView:
             event=event_view(latest_event) if latest_event else None,
             latest_plan=latest_plan_view(state),
             decision_id=latest_decision.decision_id if latest_decision else None,
-            selected_strategy=state.latest_plan.strategy_label if state.latest_plan else None,
-            candidate_count=len(latest_decision.candidate_evaluations) if latest_decision else 0,
-            selection_reason=latest_decision.selection_reason if latest_decision else None,
+            selected_strategy=state.latest_plan.strategy_label
+            if state.latest_plan
+            else None,
+            candidate_count=len(latest_decision.candidate_evaluations)
+            if latest_decision
+            else 0,
+            selection_reason=latest_decision.selection_reason
+            if latest_decision
+            else None,
             candidate_evaluations=(
-                [candidate_evaluation_view(item) for item in latest_decision.candidate_evaluations]
+                [
+                    candidate_evaluation_view(item)
+                    for item in latest_decision.candidate_evaluations
+                ]
                 if latest_decision
                 else []
             ),
@@ -1175,7 +1349,11 @@ def latest_trace_view(state: SystemState) -> TraceView:
         mode=state.mode.value,
         current_branch=trace.current_branch,
         terminal_stage=trace.terminal_stage,
-        event=event_view(trace.event) if trace.event else event_view(latest_event) if latest_event else None,
+        event=event_view(trace.event)
+        if trace.event
+        else event_view(latest_event)
+        if latest_event
+        else None,
         route_decisions=[
             RouteDecisionView(
                 from_node=item.from_node,
@@ -1187,23 +1365,33 @@ def latest_trace_view(state: SystemState) -> TraceView:
         ],
         steps=steps,
         latest_plan=latest_plan_view(state),
-        decision_id=trace.decision_id or latest_decision.decision_id if latest_decision else trace.decision_id,
-        selected_strategy=trace.selected_strategy or (state.latest_plan.strategy_label if state.latest_plan else None),
+        decision_id=trace.decision_id or latest_decision.decision_id
+        if latest_decision
+        else trace.decision_id,
+        selected_strategy=trace.selected_strategy
+        or (state.latest_plan.strategy_label if state.latest_plan else None),
         candidate_count=trace.candidate_count,
-        selection_reason=trace.selection_reason or (latest_decision.selection_reason if latest_decision else None),
+        selection_reason=trace.selection_reason
+        or (latest_decision.selection_reason if latest_decision else None),
         candidate_evaluations=(
-            [candidate_evaluation_view(item) for item in latest_decision.candidate_evaluations]
+            [
+                candidate_evaluation_view(item)
+                for item in latest_decision.candidate_evaluations
+            ]
             if latest_decision
             else []
         ),
         approval_pending=trace.approval_pending,
         approval_reason=trace.approval_reason,
         execution_status=trace.execution_status,
-        critic_summary=trace.critic_summary or (latest_decision.critic_summary if latest_decision else None),
+        critic_summary=trace.critic_summary
+        or (latest_decision.critic_summary if latest_decision else None),
     )
 
 
-def trace_view_from_record(trace: OrchestrationTrace, run: RunRecord | None = None) -> TraceView:
+def trace_view_from_record(
+    trace: OrchestrationTrace, run: RunRecord | None = None
+) -> TraceView:
     steps = [
         AgentStepView(
             step_id=step.step_id,
@@ -1255,7 +1443,12 @@ def trace_view_from_record(trace: OrchestrationTrace, run: RunRecord | None = No
         steps=steps,
         latest_plan=None,
         decision_id=run.decision_id if run else trace.decision_id,
-        selected_strategy=trace.selected_strategy or (run.selected_plan_summary.strategy_label if run and run.selected_plan_summary else None),
+        selected_strategy=trace.selected_strategy
+        or (
+            run.selected_plan_summary.strategy_label
+            if run and run.selected_plan_summary
+            else None
+        ),
         candidate_count=trace.candidate_count,
         selection_reason=trace.selection_reason,
         candidate_evaluations=[],
@@ -1367,7 +1560,9 @@ def build_event_from_envelope(envelope: EventEnvelope) -> Event:
     try:
         event_type = EventType(envelope.event_type)
     except ValueError as exc:
-        raise ValueError(f"unsupported domain event type: {envelope.event_type}") from exc
+        raise ValueError(
+            f"unsupported domain event type: {envelope.event_type}"
+        ) from exc
     return Event(
         event_id=envelope.event_id,
         type=event_type,

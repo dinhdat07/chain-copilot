@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any
 from uuid import uuid4
 
-from actions.executor import simulate_actions
 from core.enums import ActionType, ApprovalStatus, Mode, PlanStatus
 from core.memory import SQLiteStore
 from core.models import (
@@ -26,6 +25,7 @@ from policies.explainability import (
 )
 from policies.guardrails import approval_required
 from policies.scoring import compute_score
+from simulation.evaluator import evaluate_candidate_plan
 from simulation.learning import finalize_latest_scenario_run
 
 
@@ -111,7 +111,9 @@ def _append_approval_trace(
     state.latest_trace.decision_id = decision_id
     state.latest_trace.approval_pending = approval_pending
     state.latest_trace.execution_status = execution_status
-    state.latest_trace.terminal_stage = "approval" if approval_pending or to_node == "closed" else "execution"
+    state.latest_trace.terminal_stage = (
+        "approval" if approval_pending or to_node == "closed" else "execution"
+    )
     state.latest_trace.mode_after = state.mode.value
     state.latest_trace.completed_at = now
     state.latest_trace.status = "completed"
@@ -156,14 +158,16 @@ def _action_lookup_for_pending_context(state: SystemState) -> dict[str, Action]:
 def _build_safer_plan(state: SystemState, decision_log: DecisionLog) -> Plan:
     assert state.pending_plan is not None
     candidate_actions = list(state.pending_plan.actions)
-    
-    from policies.constraints import evaluate_hard_constraints, evaluate_soft_constraints
-    
+
+    from policies.constraints import (
+        evaluate_hard_constraints,
+        evaluate_soft_constraints,
+    )
+
     feasible_candidates = []
     for act in candidate_actions:
         dummy_plan = Plan(
-            plan_id="tmp", mode=state.mode, 
-            score=0.0, score_breakdown={}, actions=[act]
+            plan_id="tmp", mode=state.mode, score=0.0, score_breakdown={}, actions=[act]
         )
         is_feas, vios = evaluate_hard_constraints(dummy_plan, state)
         if is_feas:
@@ -181,12 +185,16 @@ def _build_safer_plan(state: SystemState, decision_log: DecisionLog) -> Plan:
         ]
     selected_actions = sorted(feasible_candidates, key=_safer_action_key)[:1]
     target_mode = _mode_from_state(state)
-    simulated = simulate_actions(state, selected_actions)
+    projection = evaluate_candidate_plan(
+        state=state,
+        event=_latest_event(state),
+        actions=selected_actions,
+    )
     score, breakdown = compute_score(
-        service_level=simulated.kpis.service_level,
-        total_cost=simulated.kpis.total_cost,
-        disruption_risk=simulated.kpis.disruption_risk,
-        recovery_speed=simulated.kpis.recovery_speed,
+        service_level=projection.worst_case_kpis.service_level,
+        total_cost=projection.projected_kpis.total_cost,
+        disruption_risk=projection.worst_case_kpis.disruption_risk,
+        recovery_speed=projection.projected_kpis.recovery_speed,
         mode=target_mode,
         baseline_cost=decision_log.before_kpis.total_cost,
     )
@@ -199,16 +207,33 @@ def _build_safer_plan(state: SystemState, decision_log: DecisionLog) -> Plan:
         score_breakdown=breakdown,
         strategy_label="safer_alternative",
         generated_by="operator_safer_request",
-        planner_reasoning=build_plan_summary(decision_log.before_kpis, simulated.kpis, breakdown),
+        planner_reasoning=build_plan_summary(
+            decision_log.before_kpis,
+            projection.projected_kpis,
+            breakdown,
+            selected_actions=selected_actions,
+            strategy_label="safer_alternative",
+            mode=target_mode,
+            projection_summary=projection.projection_summary,
+            simulation_horizon_days=projection.simulation_horizon_days,
+            worst_case_kpis=projection.worst_case_kpis,
+        ),
         status=PlanStatus.PROPOSED,
     )
     soft_violations = evaluate_soft_constraints(plan, state)
     plan.feasible = True
     plan.violations = soft_violations
     if soft_violations:
-        plan.mode_rationale = "Soft constraints warnings: " + "; ".join(v.message for v in soft_violations)
-        
-    needs_approval, reason = approval_required(plan, decision_log.before_kpis, simulated.kpis, _latest_event(state))
+        plan.mode_rationale = "Soft constraints warnings: " + "; ".join(
+            v.message for v in soft_violations
+        )
+
+    needs_approval, reason = approval_required(
+        plan,
+        decision_log.before_kpis,
+        projection.projected_kpis,
+        _latest_event(state),
+    )
     plan.approval_required = needs_approval
     plan.approval_reason = reason
     return plan
@@ -221,17 +246,23 @@ def _build_alternative_plan(
     evaluation: CandidatePlanEvaluation,
 ) -> Plan:
     by_id = _action_lookup_for_pending_context(state)
-    actions = [by_id[action_id] for action_id in evaluation.action_ids if action_id in by_id]
+    actions = [
+        by_id[action_id] for action_id in evaluation.action_ids if action_id in by_id
+    ]
     if not actions:
         raise ValueError("selected alternative has no executable actions")
 
     target_mode = _mode_from_state(state)
-    simulated = simulate_actions(state, actions)
+    projection = evaluate_candidate_plan(
+        state=state,
+        event=_latest_event(state),
+        actions=actions,
+    )
     score, breakdown = compute_score(
-        service_level=simulated.kpis.service_level,
-        total_cost=simulated.kpis.total_cost,
-        disruption_risk=simulated.kpis.disruption_risk,
-        recovery_speed=simulated.kpis.recovery_speed,
+        service_level=projection.worst_case_kpis.service_level,
+        total_cost=projection.projected_kpis.total_cost,
+        disruption_risk=projection.worst_case_kpis.disruption_risk,
+        recovery_speed=projection.projected_kpis.recovery_speed,
         mode=target_mode,
         baseline_cost=decision_log.before_kpis.total_cost,
     )
@@ -248,12 +279,15 @@ def _build_alternative_plan(
         planner_reasoning=evaluation.rationale
         or build_plan_summary(
             decision_log.before_kpis,
-            simulated.kpis,
+            projection.projected_kpis,
             breakdown,
             selected_actions=actions,
             strategy_label=evaluation.strategy_label,
             mode=target_mode,
             mode_rationale=evaluation.mode_rationale,
+            projection_summary=evaluation.projection_summary,
+            simulation_horizon_days=evaluation.simulation_horizon_days,
+            worst_case_kpis=evaluation.worst_case_kpis,
         ),
         status=PlanStatus.PROPOSED,
         feasible=evaluation.feasible,
@@ -270,15 +304,18 @@ def _build_alternative_plan(
     needs_approval, reason = approval_required(
         plan,
         decision_log.before_kpis,
-        simulated.kpis,
+        projection.projected_kpis,
         _latest_event(state),
     )
     plan.approval_required = True
-    plan.approval_reason = _merge_reason_parts(
-        f"operator selected alternative strategy ({evaluation.strategy_label})",
-        evaluation.approval_reason,
-        reason if needs_approval else "",
-    ) or "operator selected alternative strategy and kept the plan in manual approval"
+    plan.approval_reason = (
+        _merge_reason_parts(
+            f"operator selected alternative strategy ({evaluation.strategy_label})",
+            evaluation.approval_reason,
+            reason if needs_approval else "",
+        )
+        or "operator selected alternative strategy and kept the plan in manual approval"
+    )
     return plan
 
 
@@ -287,9 +324,12 @@ def run_daily_plan(
     store: SQLiteStore,
     graph: Any | None = None,
     run_id: str | None = None,
+    trace_updater: Any = None,
 ) -> SystemState:
     ensure_no_pending_plan(state)
-    updated = (graph or build_graph()).invoke(state, None, run_id=run_id)
+    updated = (graph or build_graph()).invoke(
+        state, None, run_id=run_id, trace_updater=trace_updater
+    )
     _save_state(updated, store)
     return updated
 
@@ -362,7 +402,9 @@ def request_safer_plan(
     if state.pending_plan is None:
         raise ValueError("no pending decision")
     if state.pending_plan.generated_by == "operator_safer_request":
-        raise RuntimeError("safer alternative can only be requested once per approval cycle")
+        raise RuntimeError(
+            "safer alternative can only be requested once per approval cycle"
+        )
 
     previous_plan_actions = list(state.pending_plan.actions)
     state.pending_plan.status = PlanStatus.REJECTED
@@ -373,20 +415,26 @@ def request_safer_plan(
         safer_plan.approval_reason,
         "operator requested a safer alternative; manual approval is required before dispatch",
     )
-    simulated = simulate_actions(state, safer_plan.actions)
+    safer_projection = evaluate_candidate_plan(
+        state=state,
+        event=_latest_event(state),
+        actions=safer_plan.actions,
+    )
     winning_factors = build_winning_factors(
         safer_plan.actions,
         previous_decision.before_kpis,
-        simulated.kpis,
+        safer_projection.projected_kpis,
         safer_plan.score_breakdown,
     )
-    rejection_reasons = explain_rejected_actions(previous_plan_actions, safer_plan.actions, 1)
+    rejection_reasons = explain_rejected_actions(
+        previous_plan_actions, safer_plan.actions, 1
+    )
     new_decision = DecisionLog(
         decision_id=f"dec_{uuid4().hex[:8]}",
         plan_id=safer_plan.plan_id,
         event_ids=safer_plan.trigger_event_ids,
         before_kpis=previous_decision.before_kpis.model_copy(deep=True),
-        after_kpis=simulated.kpis,
+        after_kpis=safer_projection.projected_kpis,
         selected_actions=[action.action_id for action in safer_plan.actions],
         rejected_actions=rejection_reasons,
         score_breakdown=safer_plan.score_breakdown,
@@ -456,7 +504,9 @@ def select_pending_alternative_plan(
     if evaluation is None:
         raise ValueError(f"candidate strategy not found: {strategy_label}")
     if state.pending_plan.strategy_label == evaluation.strategy_label:
-        raise RuntimeError(f"{evaluation.strategy_label} is already the selected pending strategy")
+        raise RuntimeError(
+            f"{evaluation.strategy_label} is already the selected pending strategy"
+        )
 
     previous_plan_actions = list(state.pending_plan.actions)
     state.pending_plan.status = PlanStatus.REJECTED
@@ -467,11 +517,15 @@ def select_pending_alternative_plan(
         decision_log=previous_decision,
         evaluation=evaluation,
     )
-    simulated = simulate_actions(state, alternative_plan.actions)
+    alternative_projection = evaluate_candidate_plan(
+        state=state,
+        event=_latest_event(state),
+        actions=alternative_plan.actions,
+    )
     winning_factors = build_winning_factors(
         alternative_plan.actions,
         previous_decision.before_kpis,
-        simulated.kpis,
+        alternative_projection.projected_kpis,
         alternative_plan.score_breakdown,
     )
     rejection_reasons = explain_rejected_actions(
@@ -480,15 +534,13 @@ def select_pending_alternative_plan(
         len(alternative_plan.actions),
     )
 
-    selection_reason = (
-        f"Operator selected the {evaluation.strategy_label} alternative for manual execution review."
-    )
+    selection_reason = f"Operator selected the {evaluation.strategy_label} alternative for manual execution review."
     new_decision = DecisionLog(
         decision_id=f"dec_{uuid4().hex[:8]}",
         plan_id=alternative_plan.plan_id,
         event_ids=alternative_plan.trigger_event_ids,
         before_kpis=previous_decision.before_kpis.model_copy(deep=True),
-        after_kpis=simulated.kpis,
+        after_kpis=alternative_projection.projected_kpis,
         selected_actions=[action.action_id for action in alternative_plan.actions],
         rejected_actions=rejection_reasons,
         score_breakdown=alternative_plan.score_breakdown,

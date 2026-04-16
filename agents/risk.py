@@ -12,8 +12,10 @@ class RiskAgent(BaseAgent):
 
     custom_system_prompt = (
         "Role: {agent_name} specialist agent in an autonomous supply chain control tower. "
-        "CRITICAL: Write the 'domain_summary' in English summarizing the disruption based on external_api_data"
-        "Make it sound natural but precise. Do not invent new actions or make up false information."
+        "CRITICAL: Your ONLY goal is to write a comprehensive 'domain_summary' in English "
+        "summarizing the disruption based on external_api_data. "
+        "Make it sound natural but precise. Do not invent new actions or make up false information. "
+        "Return empty arrays for impacts, tradeoffs, and recommended actions."
     )
 
     def run(self, state: SystemState, event: Event | None = None) -> AgentProposal:
@@ -80,8 +82,16 @@ class RiskAgent(BaseAgent):
                 "external_api_data": api_payloads,
             },
         )
+
         if not proposal.downstream_impacts and event is not None:
             proposal.downstream_impacts.append(
                 "Elevated disruption risk may affect downstream service level and recovery speed."
             )
+
+        # Keep the risk agent non-prescriptive even when the LLM returns extras.
+        proposal.recommended_action_ids.clear()
+        proposal.tradeoffs.clear()
+
         return proposal
+
+

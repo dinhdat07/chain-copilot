@@ -12,6 +12,8 @@ def approval_required(
         return False, ""
     if event and event.severity >= 0.75:
         return True, "Event severity exceeds approval threshold"
+    if event and event.severity >= 0.65 and len(plan.actions) >= 3:
+        return True, "Disruption response package exceeds automatic execution threshold"
     if before_kpis.total_cost > 0:
         cost_increase = (after_kpis.total_cost - before_kpis.total_cost) / before_kpis.total_cost
         if cost_increase > 0.15:

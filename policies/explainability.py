@@ -42,6 +42,9 @@ def build_plan_summary(
     mode: Mode | str = Mode.NORMAL,
     runner_up: CandidatePlanEvaluation | None = None,
     mode_rationale: str = "",
+    projection_summary: str = "",
+    simulation_horizon_days: int | None = None,
+    worst_case_kpis: KPIState | None = None,
 ) -> str:
     selected_actions = selected_actions or []
     action_text = (
@@ -57,13 +60,25 @@ def build_plan_summary(
         )
     mode_text = f"This recommendation is optimized for {_mode_label(mode)}."
     rationale_text = f" {mode_rationale}" if mode_rationale else ""
+    horizon_text = (
+        f" Over the next {simulation_horizon_days} day(s), "
+        if simulation_horizon_days and simulation_horizon_days > 0
+        else " "
+    )
+    worst_case_text = ""
+    if worst_case_kpis is not None:
+        worst_case_text = (
+            f"Worst projected service reaches {_pct(worst_case_kpis.service_level)} and "
+            f"worst disruption risk reaches {_pct(worst_case_kpis.disruption_risk)}."
+        )
+    projection_text = f" {projection_summary}" if projection_summary else ""
     return (
         f"Selected {strategy_label or 'current'} strategy using {action_text}. "
         f"Projected service level moves from {_pct(before_kpis.service_level)} to {_pct(after_kpis.service_level)}, "
         f"total cost changes by {_delta_num(before_kpis.total_cost, after_kpis.total_cost)}, "
         f"disruption risk changes by {_delta_pct(before_kpis.disruption_risk, after_kpis.disruption_risk)}, "
         f"and recovery speed changes by {_delta_pct(before_kpis.recovery_speed, after_kpis.recovery_speed)}."
-        f"{comparison} {mode_text}{rationale_text}"
+        f"{comparison}{horizon_text}{worst_case_text}{projection_text} {mode_text}{rationale_text}"
     ).strip()
 
 
@@ -191,6 +206,8 @@ def build_critic_review(
             f" It scored ahead of {runner_up.strategy_label} by {selected.score - runner_up.score:+.4f}, "
             f"mainly on service, cost, risk, and recovery trade-offs."
         )
+    if selected is not None and selected.projection_summary:
+        summary += f" {selected.projection_summary}"
     if selected_plan.approval_required:
         summary += " Human approval is prudent because the expected impact crosses the approval guardrail."
 
@@ -219,6 +236,11 @@ def build_critic_review(
             findings.append(
                 f"Compared with {runner_up.strategy_label}, this plan gives up {_pct(-service_gap)} of projected service level to gain resilience or cost control."
             )
+    if selected is not None and selected.projected_state_summary is not None:
+        findings.append(
+            "Projected end-state: "
+            f"{selected.projected_state_summary.summary}"
+        )
     if selected_plan.approval_required and not findings:
         findings.append(
             "Approval is recommended because the plan changes the operating posture meaningfully enough to warrant human review."
