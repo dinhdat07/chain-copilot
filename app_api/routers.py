@@ -694,7 +694,7 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
                 
                 # Send a combined payload: the specific event + the overall trace snapshot
                 payload = {
-                    "event": event.model_dump(),
+                    "event": event.model_dump(mode="json"),
                     "trace": latest_trace_view(runtime.state).model_dump(mode="json"),
                 }
                 await websocket.send_json(payload)
@@ -720,6 +720,7 @@ async def _stream_daily_plan(runtime_getter: Callable, run_id: str) -> None:
     """
     from streaming.event_bus import event_bus
     from streaming.schemas import ThinkingEvent
+    from datetime import datetime
 
     loop = asyncio.get_event_loop()
     runtime = runtime_getter()

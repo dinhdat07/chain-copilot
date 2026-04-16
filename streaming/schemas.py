@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from datetime import datetime
 from pydantic import BaseModel, Field
 
 
@@ -55,4 +56,8 @@ class ThinkingEvent(BaseModel):
     sequence: int = Field(
         default=0,
         description="Order of the event in the run — auto-incremented by EventBus",
+    )
+    timestamp: datetime = Field(
+        default_factory=lambda: datetime.now(),
+        description="ISO timestamp of when the event was emitted",
     )
