@@ -41,12 +41,18 @@ def test_seed_scenarios_target_existing_entities() -> None:
         for event in get_scenario_events(scenario_name):
             supplier_id = event.payload.get("supplier_id")
             sku = event.payload.get("sku")
+            affected_skus = event.payload.get("affected_skus") or []
+            demand_changes = event.payload.get("demand_changes") or []
             route_id = event.payload.get("route_id")
 
             if supplier_id is not None:
                 assert supplier_id in supplier_ids
             if sku is not None:
                 assert sku in inventory_skus
+            for affected_sku in affected_skus:
+                assert affected_sku in inventory_skus
+            for change in demand_changes:
+                assert change["sku"] in inventory_skus
             if route_id is not None:
                 assert route_id in route_ids
 

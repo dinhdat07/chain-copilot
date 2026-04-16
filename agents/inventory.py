@@ -4,7 +4,7 @@ import math
 from collections import Counter
 
 from agents.base import BaseAgent
-from core.enums import ActionType
+from core.enums import ActionType, EventType
 from core.models import Action, AgentProposal, Event, SystemState
 
 
@@ -23,14 +23,36 @@ class InventoryAgent(BaseAgent):
     custom_system_prompt = """You are the Inventory Agent for a supply chain control tower.
 Explain inventory risk like an operations manager would.
 Be specific about stock position, expected demand, days of cover, reorder point, safety stock, and the business impact of inaction.
-If replenishment is proposed, explain why that action is better than waiting.
-Do not invent inventory math, customer orders, or supplier facts that are not in the provided state."""
+    If replenishment is proposed, explain why that action is better than waiting.
+    Do not invent inventory math, customer orders, or supplier facts that are not in the provided state."""
+
+    @staticmethod
+    def _affected_skus(event: Event | None) -> set[str]:
+        if event is None:
+            return set()
+        if event.payload.get("affected_skus"):
+            return {str(sku) for sku in event.payload.get("affected_skus", []) if sku}
+        if event.type == EventType.DEMAND_SPIKE:
+            changes = event.payload.get("demand_changes")
+            if isinstance(changes, list) and changes:
+                return {
+                    str(item.get("sku"))
+                    for item in changes
+                    if isinstance(item, dict) and item.get("sku")
+                }
+            sku = event.payload.get("sku")
+            return {str(sku)} if sku else set()
+        sku = event.payload.get("sku")
+        return {str(sku)} if sku else set()
 
     def run(self, state: SystemState, event: Event | None = None) -> AgentProposal:
         proposal = AgentProposal(agent=self.name)
         sku_order_counts = Counter(order.sku for order in state.orders)
         risk_rows: list[dict[str, object]] = []
+        affected_skus = self._affected_skus(event)
         for sku, item in state.inventory.items():
+            if affected_skus and sku not in affected_skus:
+                continue
             # --- 1. Calculate parameters from Demand and Supplier ---
             avg_d = item.forecast_qty
             std_d = getattr(item, "std_demand", 0.0)
@@ -56,9 +78,7 @@ Do not invent inventory math, customer orders, or supplier facts that are not in
             daily_demand = max(float(avg_d), 0.0)
             available_stock = item.on_hand + item.incoming_qty
             days_of_cover = (
-                available_stock / daily_demand
-                if daily_demand > 0
-                else float("inf")
+                available_stock / daily_demand if daily_demand > 0 else float("inf")
             )
             order_count = sku_order_counts.get(sku, 0)
             root_cause = []
@@ -70,7 +90,9 @@ Do not invent inventory math, customer orders, or supplier facts that are not in
                 root_cause.append("below-target supplier reliability")
             if daily_demand > max(item.on_hand, 1):
                 root_cause.append("demand running ahead of current on-hand stock")
-            cause_text = ", ".join(root_cause) if root_cause else "normal replenishment cycle"
+            cause_text = (
+                ", ".join(root_cause) if root_cause else "normal replenishment cycle"
+            )
 
             if projected < item.safety_stock:
                 inventory_status = "stockout risk"
@@ -92,7 +114,9 @@ Do not invent inventory math, customer orders, or supplier facts that are not in
                     "projected_stock": projected,
                     "reorder_point": item.reorder_point,
                     "safety_stock": item.safety_stock,
-                    "days_of_cover": None if days_of_cover == float("inf") else round(days_of_cover, 1),
+                    "days_of_cover": None
+                    if days_of_cover == float("inf")
+                    else round(days_of_cover, 1),
                     "lead_time_days": lead_time,
                     "supplier_reliability": reliability,
                     "pending_orders": order_count,
@@ -119,12 +143,18 @@ Do not invent inventory math, customer orders, or supplier facts that are not in
         ranked_rows = sorted(
             risk_rows,
             key=lambda row: (
-                0 if row["inventory_status"] == "stockout risk" else 1 if row["inventory_status"] == "reorder risk" else 2,
+                0
+                if row["inventory_status"] == "stockout risk"
+                else 1
+                if row["inventory_status"] == "reorder risk"
+                else 2,
                 row["days_of_cover"] if row["days_of_cover"] is not None else 9999,
             ),
         )
         critical_rows = [
-            row for row in ranked_rows if row["inventory_status"] in {"stockout risk", "reorder risk"}
+            row
+            for row in ranked_rows
+            if row["inventory_status"] in {"stockout risk", "reorder risk"}
         ]
         if critical_rows:
             top = critical_rows[0]
@@ -165,10 +195,10 @@ Do not invent inventory math, customer orders, or supplier facts that are not in
                 f"{critical_rows[0]['days_of_cover'] or 0:.1f} days of cover."
             )
         elif ranked_rows:
-            stable_count = sum(1 for row in ranked_rows if row["inventory_status"] == "stable")
-            proposal.domain_summary = (
-                f"Inventory is broadly stable. {stable_count} SKUs remain above reorder point after applying current demand, lead time, and safety stock assumptions."
+            stable_count = sum(
+                1 for row in ranked_rows if row["inventory_status"] == "stable"
             )
+            proposal.domain_summary = f"Inventory is broadly stable. {stable_count} SKUs remain above reorder point after applying current demand, lead time, and safety stock assumptions."
             proposal.tradeoffs.append(
                 "Holding current inventory avoids unnecessary replenishment cost, but coverage should still be refreshed as demand and supplier conditions change."
             )

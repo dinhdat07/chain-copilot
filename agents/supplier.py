@@ -11,8 +11,24 @@ class SupplierAgent(BaseAgent):
     name = "supplier"
     custom_system_prompt = """You are the Supplier Management Agent for a supply chain system.
 When supplier delays or disruptions occur, your job is to analyze alternative suppliers, factoring in reliability, cost, and lead times.
-Provide a concise, professional summary (under 4 sentences) of the supplier issues, your evaluation of the alternatives, and the recommended supplier switch.
-Write the summary entirely in English. Do NOT use markdown formatting or bullet points in the summary."""
+    Provide a concise, professional summary (under 4 sentences) of the supplier issues, your evaluation of the alternatives, and the recommended supplier switch.
+    Write the summary entirely in English. Do NOT use markdown formatting or bullet points in the summary."""
+
+    @staticmethod
+    def _affected_skus(event: Event | None) -> set[str]:
+        if event is None:
+            return set()
+        if event.payload.get("affected_skus"):
+            return {str(sku) for sku in event.payload.get("affected_skus", []) if sku}
+        changes = event.payload.get("demand_changes")
+        if isinstance(changes, list) and changes:
+            return {
+                str(item.get("sku"))
+                for item in changes
+                if isinstance(item, dict) and item.get("sku")
+            }
+        sku = event.payload.get("sku")
+        return {str(sku)} if sku else set()
 
     def run(self, state: SystemState, event: Event | None = None) -> AgentProposal:
         proposal = AgentProposal(agent=self.name)
@@ -25,7 +41,10 @@ Write the summary entirely in English. Do NOT use markdown formatting or bullet 
             if event and event.type in {EventType.SUPPLIER_DELAY, EventType.COMPOUND}
             else None
         )
+        affected_skus = self._affected_skus(event)
         for sku, item in state.inventory.items():
+            if affected_skus and sku not in affected_skus:
+                continue
             current = item.preferred_supplier_id
             current_supplier = state.suppliers.get(f"{current}_{sku}")
             if current_supplier is None:
@@ -84,6 +103,7 @@ Write the summary entirely in English. Do NOT use markdown formatting or bullet 
                     for supplier in ranked_suppliers
                 ]
                 for sku, ranked_suppliers in by_sku.items()
+                if not affected_skus or sku in affected_skus
             }
             self.enrich_with_llm(
                 state=state,
@@ -91,6 +111,7 @@ Write the summary entirely in English. Do NOT use markdown formatting or bullet 
                 proposal=proposal,
                 state_slice={
                     "delayed_supplier": delayed_supplier,
+                    "affected_skus": sorted(affected_skus),
                     "supplier_options": supplier_snapshot,
                 },
             )

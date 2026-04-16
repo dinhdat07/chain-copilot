@@ -27,6 +27,29 @@ from simulation.domain_rules import (
 )
 
 
+def _event_scope_label(event: Event | None) -> str:
+    if event is None:
+        return ""
+    affected = event.payload.get("affected_skus")
+    if isinstance(affected, list) and affected:
+        sku_text = ", ".join(str(sku) for sku in affected[:4])
+        return f"The direct scenario scope covers {len(affected)} supplier-affected SKU(s): {sku_text}."
+    changes = event.payload.get("demand_changes")
+    if isinstance(changes, list) and changes:
+        skus = [
+            str(item.get("sku"))
+            for item in changes
+            if isinstance(item, dict) and item.get("sku")
+        ]
+        if skus:
+            sku_text = ", ".join(skus[:4])
+            return f"The direct scenario scope covers {len(skus)} demand-affected SKU(s): {sku_text}."
+    sku = event.payload.get("sku")
+    if sku:
+        return f"The direct scenario scope centers on SKU {sku}."
+    return ""
+
+
 @dataclass
 class CandidateProjection:
     projected_state: SystemState
@@ -66,11 +89,17 @@ def evaluate_candidate_plan(
 
     for step_index in range(1, max(horizon_days, 1) + 1):
         advance_demand(context, step_index=step_index, event=projected_event)
-        supplier_notes = advance_supplier(context, step_index=step_index, event=projected_event)
-        route_notes = advance_logistics(context, step_index=step_index, event=projected_event)
+        supplier_notes = advance_supplier(
+            context, step_index=step_index, event=projected_event
+        )
+        route_notes = advance_logistics(
+            context, step_index=step_index, event=projected_event
+        )
         step_metrics = advance_inventory(context, step_index=step_index)
         final_metrics = step_metrics
-        severity = advance_risk(context, event=projected_event, step_metrics=step_metrics)
+        severity = advance_risk(
+            context, event=projected_event, step_metrics=step_metrics
+        )
         step_kpis = projected_state.kpis.model_copy(deep=True)
         service_values.append(step_kpis.service_level)
         cost_values.append(step_kpis.total_cost)
@@ -79,9 +108,13 @@ def evaluate_candidate_plan(
 
         key_changes = supplier_notes[:2] + route_notes[:2]
         if step_metrics["inbound_units_due"] > 0:
-            key_changes.append(f"{step_metrics['inbound_units_due']} units landed into the network")
+            key_changes.append(
+                f"{step_metrics['inbound_units_due']} units landed into the network"
+            )
         if step_metrics["backlog_units"] > 0:
-            key_changes.append(f"backlog stands at {step_metrics['backlog_units']} units")
+            key_changes.append(
+                f"backlog stands at {step_metrics['backlog_units']} units"
+            )
 
         projection_steps.append(
             ProjectionStep(
@@ -188,14 +221,18 @@ def _projection_summary(
     if event is not None:
         if event.type == EventType.DEMAND_SPIKE:
             event_text = " Demand pressure is expected to normalize gradually."
-        elif event.type in {EventType.SUPPLIER_DELAY, EventType.ROUTE_BLOCKAGE, EventType.COMPOUND}:
+        elif event.type in {
+            EventType.SUPPLIER_DELAY,
+            EventType.ROUTE_BLOCKAGE,
+            EventType.COMPOUND,
+        }:
             event_text = " Mitigation quality determines whether disruption severity decays fast enough."
+    scope_text = _event_scope_label(event)
     return (
-        f"Over the next {len(projected_steps)} day(s), service bottoms at "
+        f"{scope_text} Over the next {len(projected_steps)} day(s), network-wide service bottoms at "
         f"{worst_case_kpis.service_level:.0%} on {worst_service_step.label} while disruption risk peaks at "
         f"{worst_case_kpis.disruption_risk:.0%} on {highest_risk_step.label}. "
         f"By {projected_steps[-1].label}, the plan projects service at {projected_kpis.service_level:.0%}, "
         f"risk at {projected_kpis.disruption_risk:.0%}, and recovery speed at {projected_kpis.recovery_speed:.0%}. "
         f"{summary.summary}{event_text}"
     )
-

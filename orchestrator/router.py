@@ -39,7 +39,7 @@ def route_after_supplier(graph_state: Mapping[str, object]) -> str:
     state = _state_from_graph(graph_state)
     event_type = state.active_events[-1].type if state.active_events else None
     if event_type == EventType.SUPPLIER_DELAY:
-        return "logistics"
+        return "inventory"
     return "planner"
 
 

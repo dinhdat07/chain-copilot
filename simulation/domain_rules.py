@@ -22,9 +22,9 @@ class SimulationContext:
 
 
 def _supplier_for_item(state: SystemState, item: InventoryItem):
-    return state.suppliers.get(f"{item.preferred_supplier_id}_{item.sku}") or state.suppliers.get(
-        item.preferred_supplier_id
-    )
+    return state.suppliers.get(
+        f"{item.preferred_supplier_id}_{item.sku}"
+    ) or state.suppliers.get(item.preferred_supplier_id)
 
 
 def _route_for_item(state: SystemState, item: InventoryItem):
@@ -35,6 +35,44 @@ def _event_type(event: Event | None) -> EventType | None:
     return event.type if event is not None else None
 
 
+def _affected_skus(event: Event | None) -> set[str]:
+    if event is None:
+        return set()
+    affected = event.payload.get("affected_skus")
+    if isinstance(affected, list) and affected:
+        return {str(sku) for sku in affected if sku}
+    changes = event.payload.get("demand_changes")
+    if isinstance(changes, list) and changes:
+        return {
+            str(item.get("sku"))
+            for item in changes
+            if isinstance(item, dict) and item.get("sku")
+        }
+    sku = event.payload.get("sku")
+    return {str(sku)} if sku else set()
+
+
+def _demand_change_map(event: Event | None) -> dict[str, float]:
+    if event is None or event.type != EventType.DEMAND_SPIKE:
+        return {}
+    changes = event.payload.get("demand_changes")
+    if isinstance(changes, list) and changes:
+        result: dict[str, float] = {}
+        for item in changes:
+            if not isinstance(item, dict):
+                continue
+            sku = str(item.get("sku") or "").strip()
+            if not sku:
+                continue
+            result[sku] = float(item.get("multiplier", 1.0))
+        if result:
+            return result
+    sku = str(event.payload.get("sku") or "").strip()
+    if not sku:
+        return {}
+    return {sku: float(event.payload.get("multiplier", 1.0))}
+
+
 def _event_penalty_days(
     *,
     event: Event | None,
@@ -43,7 +81,9 @@ def _event_penalty_days(
 ) -> int:
     if event is None:
         return 0
-    severity_penalty = 2 if event.severity >= 0.85 else 1 if event.severity >= 0.55 else 0
+    severity_penalty = (
+        2 if event.severity >= 0.85 else 1 if event.severity >= 0.55 else 0
+    )
     if event.type == EventType.SUPPLIER_DELAY:
         affected_supplier = str(event.payload.get("supplier_id") or "")
         if supplier_id and supplier_id == affected_supplier:
@@ -64,15 +104,21 @@ def _event_penalty_days(
     return 0
 
 
-def _route_delay_days(state: SystemState, item: InventoryItem, event: Event | None) -> int:
+def _route_delay_days(
+    state: SystemState, item: InventoryItem, event: Event | None
+) -> int:
     route = _route_for_item(state, item)
     if route is None:
         return 0
     blocked_penalty = 2 if route.status == "blocked" else 0
     risk_penalty = 1 if route.risk_score >= 0.65 else 0
-    return blocked_penalty + risk_penalty + _event_penalty_days(
-        event=event,
-        route_id=route.route_id,
+    return (
+        blocked_penalty
+        + risk_penalty
+        + _event_penalty_days(
+            event=event,
+            route_id=route.route_id,
+        )
     )
 
 
@@ -141,9 +187,9 @@ def apply_candidate_actions(
             if item is None:
                 continue
             supplier_id = str(action.parameters.get("supplier_id") or "")
-            supplier = state.suppliers.get(f"{supplier_id}_{item.sku}") or state.suppliers.get(
-                supplier_id
-            )
+            supplier = state.suppliers.get(
+                f"{supplier_id}_{item.sku}"
+            ) or state.suppliers.get(supplier_id)
             if supplier is None:
                 continue
             item.preferred_supplier_id = supplier_id
@@ -162,7 +208,9 @@ def apply_candidate_actions(
             if quantity <= 0:
                 continue
             supplier = _supplier_for_item(state, item)
-            capacity = max(int(supplier.capacity), 0) if supplier is not None else quantity
+            capacity = (
+                max(int(supplier.capacity), 0) if supplier is not None else quantity
+            )
             scheduled_qty = min(quantity, capacity) if capacity > 0 else quantity
             arrival_step = _arrival_step_for_item(state, item, event=event)
             context.inbound_schedule.setdefault(arrival_step, {})
@@ -187,34 +235,43 @@ def apply_candidate_actions(
     state.kpis = recompute_kpis(state)
 
 
-def advance_demand(context: SimulationContext, *, step_index: int, event: Event | None) -> None:
+def advance_demand(
+    context: SimulationContext, *, step_index: int, event: Event | None
+) -> None:
     state = context.working_state
     event_type = _event_type(event)
-    spike_multiplier = float(event.payload.get("multiplier", 1.0)) if event is not None else 1.0
-    spike_sku = str(event.payload.get("sku") or "") if event is not None else ""
-    if event_type != EventType.DEMAND_SPIKE or not spike_sku:
+    demand_changes = _demand_change_map(event)
+    if event_type != EventType.DEMAND_SPIKE or not demand_changes:
         for sku, item in state.inventory.items():
-            item.forecast_qty = context.baseline_forecast_by_sku.get(sku, item.forecast_qty)
+            item.forecast_qty = context.baseline_forecast_by_sku.get(
+                sku, item.forecast_qty
+            )
         return
 
     decay_ratio = 0.55 ** max(step_index - 1, 0)
-    active_multiplier = 1.0 + max(spike_multiplier - 1.0, 0.0) * decay_ratio
     for sku, item in state.inventory.items():
         base = context.baseline_forecast_by_sku.get(sku, item.forecast_qty)
-        if sku == spike_sku:
+        if sku in demand_changes:
+            spike_multiplier = demand_changes[sku]
+            active_multiplier = 1.0 + max(spike_multiplier - 1.0, 0.0) * decay_ratio
             item.forecast_qty = max(int(round(base * active_multiplier)), 0)
         else:
             item.forecast_qty = base
 
 
-def advance_supplier(context: SimulationContext, *, step_index: int, event: Event | None) -> list[str]:
+def advance_supplier(
+    context: SimulationContext, *, step_index: int, event: Event | None
+) -> list[str]:
     state = context.working_state
     observations: list[str] = []
     if event is None:
         return observations
     if event.type not in {EventType.SUPPLIER_DELAY, EventType.COMPOUND}:
         return observations
+    affected_skus = _affected_skus(event)
     for item in state.inventory.values():
+        if affected_skus and item.sku not in affected_skus:
+            continue
         supplier = _supplier_for_item(state, item)
         if supplier is None:
             continue
@@ -225,19 +282,26 @@ def advance_supplier(context: SimulationContext, *, step_index: int, event: Even
     return observations
 
 
-def advance_logistics(context: SimulationContext, *, step_index: int, event: Event | None) -> list[str]:
+def advance_logistics(
+    context: SimulationContext, *, step_index: int, event: Event | None
+) -> list[str]:
     state = context.working_state
     observations: list[str] = []
     if event is None:
         return observations
     if event.type not in {EventType.ROUTE_BLOCKAGE, EventType.COMPOUND}:
         return observations
+    affected_skus = _affected_skus(event)
     for item in state.inventory.values():
+        if affected_skus and item.sku not in affected_skus:
+            continue
         route = _route_for_item(state, item)
         if route is None:
             continue
         if route.status == "blocked":
-            observations.append(f"{item.sku} remains exposed to blocked route {route.route_id}")
+            observations.append(
+                f"{item.sku} remains exposed to blocked route {route.route_id}"
+            )
         elif route.risk_score >= 0.6 and step_index == 1:
             observations.append(
                 f"{item.sku} still uses a high-risk lane ({route.route_id}, risk {route.risk_score:.0%})"
@@ -298,7 +362,9 @@ def advance_risk(
 
     unresolved_pressure = 0.0
     if state.inventory:
-        unresolved_pressure = step_metrics["inventory_out_of_stock"] / max(len(state.inventory), 1)
+        unresolved_pressure = step_metrics["inventory_out_of_stock"] / max(
+            len(state.inventory), 1
+        )
     improvement = min(context.mitigation_count * 0.03, 0.15)
     decay = 0.08 + improvement
     escalation = 0.05 if unresolved_pressure >= 0.08 else 0.0
@@ -331,19 +397,27 @@ def _projected_recovery_speed(
     return max(0.05, min(0.99, base + improvement - penalty))
 
 
-def dominant_constraint(context: SimulationContext, step_metrics: dict[str, int]) -> str:
+def dominant_constraint(
+    context: SimulationContext, step_metrics: dict[str, int]
+) -> str:
     state = context.working_state
     if step_metrics["inventory_out_of_stock"] > 0:
         return "inventory shortfall"
     if step_metrics["backlog_units"] > 0:
         return "order backlog"
     if any(
-        (_route_for_item(state, item) is not None and _route_for_item(state, item).status == "blocked")
+        (
+            _route_for_item(state, item) is not None
+            and _route_for_item(state, item).status == "blocked"
+        )
         for item in state.inventory.values()
     ):
         return "route disruption"
     if any(
-        (_supplier_for_item(state, item) is not None and _supplier_for_item(state, item).reliability < 0.85)
+        (
+            _supplier_for_item(state, item) is not None
+            and _supplier_for_item(state, item).reliability < 0.85
+        )
         for item in state.inventory.values()
     ):
         return "supplier reliability"
@@ -362,7 +436,9 @@ def step_summary(
         f"risk at {context.working_state.kpis.disruption_risk:.0%}",
     ]
     if step_metrics["inventory_out_of_stock"] > 0:
-        parts.append(f"{step_metrics['inventory_out_of_stock']} SKU(s) remain out of stock")
+        parts.append(
+            f"{step_metrics['inventory_out_of_stock']} SKU(s) remain out of stock"
+        )
     elif step_metrics["inventory_at_risk"] > 0:
         parts.append(f"{step_metrics['inventory_at_risk']} SKU(s) remain at risk")
     if step_metrics["inbound_units_due"] > 0:

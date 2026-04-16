@@ -14,8 +14,29 @@ class DemandAgent(BaseAgent):
     custom_system_prompt = """You are the Demand Agent for a supply chain management system.
 Your role is to analyze demand spikes, historical demand patterns, and forecast future demand.
 When a disruption or event occurs (like a DEMAND_SPIKE), you evaluate how it impacts the required inventory levels.
-Provide a concise, professional summary (under 4 sentences) of your demand analysis, the specific SKU affected, and your recommendations.
-Write the summary entirely in English. Do NOT use markdown formatting or bullet points in the summary."""
+    Provide a concise, professional summary (under 4 sentences) of your demand analysis, the specific SKU affected, and your recommendations.
+    Write the summary entirely in English. Do NOT use markdown formatting or bullet points in the summary."""
+
+    @staticmethod
+    def _event_demand_changes(event: Event | None) -> dict[str, float]:
+        if event is None or event.type != EventType.DEMAND_SPIKE:
+            return {}
+        changes = event.payload.get("demand_changes")
+        if isinstance(changes, list) and changes:
+            result: dict[str, float] = {}
+            for item in changes:
+                if not isinstance(item, dict):
+                    continue
+                sku = str(item.get("sku") or "").strip()
+                if not sku:
+                    continue
+                result[sku] = float(item.get("multiplier", 1.0))
+            if result:
+                return result
+        sku = str(event.payload.get("sku") or "").strip()
+        if not sku:
+            return {}
+        return {sku: float(event.payload.get("multiplier", 1.5))}
 
     def run(self, state: SystemState, event: Event | None = None) -> AgentProposal:
         proposal = AgentProposal(agent=self.name)
@@ -23,16 +44,16 @@ Write the summary entirely in English. Do NOT use markdown formatting or bullet 
         for demand in state.demands:
             grouped[demand.sku].append((demand.day_index, demand.quantity))
 
-        multiplier = 1.0
-        event_sku = None
-        if event and event.type == EventType.DEMAND_SPIKE:
-            multiplier = float(event.payload.get("multiplier", 1.5))
-            event_sku = event.payload.get("sku")
+        event_changes = self._event_demand_changes(event)
+        affected_skus = set(event_changes)
+        for sku, multiplier in event_changes.items():
             proposal.observations.append(
-                f"demand spike multiplier applied: {multiplier:.2f}"
+                f"{sku} demand spike multiplier applied: {multiplier:.2f}"
             )
 
         for sku, points in grouped.items():
+            if affected_skus and sku not in affected_skus:
+                continue
             df = pd.DataFrame(points, columns=["day_index", "quantity"]).sort_values(
                 "day_index"
             )
@@ -44,8 +65,8 @@ Write the summary entirely in English. Do NOT use markdown formatting or bullet 
             forecast = int(round(avg_d)) if pd.notna(avg_d) else 0
             std_d_val = float(std_d) if pd.notna(std_d) else 0.0
 
-            if sku == event_sku:
-                forecast = int(round(forecast * multiplier))
+            if sku in event_changes:
+                forecast = int(round(forecast * event_changes[sku]))
             if sku in state.inventory:
                 state.inventory[sku].forecast_qty = max(0, forecast)
                 state.inventory[sku].std_demand = std_d_val
@@ -53,26 +74,27 @@ Write the summary entirely in English. Do NOT use markdown formatting or bullet 
                     f"{sku} historical demand (30 days): Avg = {forecast}, Std Dev = {std_d_val:.2f}"
                 )
 
-        if (
-            event
-            and event.type == EventType.DEMAND_SPIKE
-            and event_sku in state.inventory
-        ):
-            item = state.inventory[event_sku]
-            proposal.proposals.append(
-                Action(
-                    action_id=f"act_demand_rebalance_{event_sku}",
-                    action_type=ActionType.REBALANCE,
-                    target_id=event_sku,
-                    parameters={"quantity": max(item.forecast_qty - item.on_hand, 0)},
-                    estimated_cost_delta=40.0,
-                    estimated_service_delta=0.08,
-                    estimated_risk_delta=-0.10,
-                    estimated_recovery_hours=8.0,
-                    reason=f"pre-position stock for {event_sku} demand spike",
-                    priority=0.75,
+        if event and event.type == EventType.DEMAND_SPIKE:
+            for event_sku in affected_skus:
+                if event_sku not in state.inventory:
+                    continue
+                item = state.inventory[event_sku]
+                proposal.proposals.append(
+                    Action(
+                        action_id=f"act_demand_rebalance_{event_sku}",
+                        action_type=ActionType.REBALANCE,
+                        target_id=event_sku,
+                        parameters={
+                            "quantity": max(item.forecast_qty - item.on_hand, 0)
+                        },
+                        estimated_cost_delta=40.0,
+                        estimated_service_delta=0.08,
+                        estimated_risk_delta=-0.10,
+                        estimated_recovery_hours=8.0,
+                        reason=f"pre-position stock for {event_sku} demand spike",
+                        priority=0.75,
+                    )
                 )
-            )
 
         affected_inventory = {
             sku: {
@@ -83,7 +105,7 @@ Write the summary entirely in English. Do NOT use markdown formatting or bullet 
                 "safety_stock": item.safety_stock,
             }
             for sku, item in state.inventory.items()
-            if event_sku is None or sku == event_sku
+            if not affected_skus or sku in affected_skus
         }
         if event is not None or proposal.proposals:
             self.enrich_with_llm(
@@ -91,8 +113,8 @@ Write the summary entirely in English. Do NOT use markdown formatting or bullet 
                 event=event,
                 proposal=proposal,
                 state_slice={
-                    "event_sku": event_sku,
-                    "multiplier": multiplier,
+                    "event_skus": sorted(affected_skus),
+                    "demand_changes": event_changes,
                     "affected_inventory": affected_inventory,
                 },
             )
