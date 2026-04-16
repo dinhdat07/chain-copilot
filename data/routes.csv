@@ -1,7 +1,11 @@
 route_id,origin,destination,transit_days,cost,risk_score,status
-R1,Hanoi,Haiphong,2,120.0,0.30,active
-R2,HCMC,CanTho,1,95.0,0.18,active
-R3,Hanoi,DaNang,3,150.0,0.28,blocked
-R4,Hanoi,Haiphong,1,155.0,0.12,blocked
-R5,HCMC,CanTho,2,80.0,0.25,blocked
-R6_RISK,HCMC,Haiphong,5,300.0,0.85,active
+R_BN_HN_MAIN,Bac Ninh,Hanoi,1,50.0,0.1,active
+R_BN_HN_ALT,Bac Ninh,Hanoi,2,75.0,0.2,active
+R_HP_HN_MAIN,Hai Phong,Hanoi,1,80.0,0.15,active
+R_HP_HN_ALT,Hai Phong,Hanoi,2,110.0,0.25,active
+R_QN_DN_MAIN,Quang Nam,Da Nang,1,40.0,0.1,active
+R_QN_DN_ALT,Quang Nam,Da Nang,2,60.0,0.2,active
+R_BD_HCM_MAIN,Binh Duong,HCMC,1,45.0,0.1,active
+R_BD_HCM_ALT,Binh Duong,HCMC,2,65.0,0.2,active
+R_DNAI_HCM_MAIN,Dong Nai,HCMC,1,55.0,0.15,active
+R_DNAI_HCM_ALT,Dong Nai,HCMC,2,85.0,0.25,active
