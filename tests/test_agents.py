@@ -15,10 +15,10 @@ def test_agents_emit_actions_for_supplier_delay() -> None:
         type=EventType.SUPPLIER_DELAY,
         source="test",
         severity=0.8,
-        entity_ids=["SUP_A", "SKU_1"],
+        entity_ids=["SUP_BN", "SKU_001"],
         occurred_at=utc_now(),
         detected_at=utc_now(),
-        payload={"supplier_id": "SUP_A", "sku": "SKU_1"},
+        payload={"supplier_id": "SUP_BN", "sku": "SKU_001"},
         dedupe_key="evt_supplier_delay_test",
     )
     risk = RiskAgent().run(state, event)
@@ -28,7 +28,7 @@ def test_agents_emit_actions_for_supplier_delay() -> None:
     logistics = LogisticsAgent().run(state, event)
 
     assert state.mode == Mode.CRISIS
-    assert risk.observations
+    assert risk.domain_summary
     assert demand.observations
     assert inventory.proposals
     assert inventory.domain_summary

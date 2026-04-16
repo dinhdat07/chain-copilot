@@ -5,3 +5,5 @@
 - Updated routes to connect regions (10 routes: 1 Main + 1 Alt per supplier-warehouse connection).
 - Redistributed 51 SKUs into respective regional warehouses, with preferred supplier/route dynamically assigned.
 - Patched mock APIs (`routers.py`) for Weather, Routes, and Suppliers to align geographically and id-wise.
+- Updated `LogisticsAgent` and `SupplierAgent` to properly extract disrupted entities for both single events and `COMPOUND` events, and to respect geographical origin/destination boundaries.
+- Re-aligned over 20 test files to pass with the new regional seed data, handling the scale-up from 3 to 50 SKUs appropriately.

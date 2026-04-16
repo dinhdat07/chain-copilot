@@ -57,8 +57,8 @@ def test_service_runtime_endpoint_exposes_flags_and_metrics(tmp_path: Path, monk
             "event_type": "supplier_delay",
             "source": "test",
             "severity": 0.82,
-            "entity_ids": ["SUP_A", "SKU_1"],
-            "payload": {"supplier_id": "SUP_A", "sku": "SKU_1", "delay_hours": 48},
+            "entity_ids": ["SUP_BN", "SKU_001"],
+            "payload": {"supplier_id": "SUP_BN", "sku": "SKU_001", "delay_hours": 48},
         },
     )
     assert disruption_response.status_code == 200
@@ -112,7 +112,7 @@ def test_planner_mode_deterministic_skips_candidate_llm(monkeypatch) -> None:
     monkeypatch.setattr("llm.service.GeminiClient.generate_json", _boom)
     state = load_initial_state()
     candidate_actions = [
-        Action(action_id="act_reorder_SKU_1", action_type=ActionType.REORDER, target_id="SKU_1")
+        Action(action_id="act_reorder_SKU_1", action_type=ActionType.REORDER, target_id="SKU_001")
     ]
 
     drafts, error = generate_candidate_plan_drafts(
@@ -146,7 +146,7 @@ def test_candidate_planner_retries_once_before_succeeding(monkeypatch) -> None:
     monkeypatch.setattr("llm.service.GeminiClient.generate_json", _flaky)
     state = load_initial_state()
     candidate_actions = [
-        Action(action_id="act_reorder_SKU_1", action_type=ActionType.REORDER, target_id="SKU_1")
+        Action(action_id="act_reorder_SKU_1", action_type=ActionType.REORDER, target_id="SKU_001")
     ]
 
     drafts, error = generate_candidate_plan_drafts(

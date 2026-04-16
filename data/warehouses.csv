@@ -1,4 +1,4 @@
 warehouse_id,name,capacity,region
-WH_HN,Hanoi Hub,5000,north
-WH_DN,Da Nang Hub,3000,central
-WH_HCM,Ho Chi Minh Hub,6000,south
+WH_HN,Hanoi Hub,8000,north
+WH_DN,Da Nang Hub,5000,central
+WH_HCM,Ho Chi Minh Hub,8000,south

@@ -21,7 +21,7 @@ def _make_action(action_type: ActionType = ActionType.REORDER, action_id: str = 
     return Action(
         action_id=action_id,
         action_type=action_type,
-        target_id="SKU_1",
+        target_id="SKU_001",
         parameters={"quantity": 50},
         estimated_cost_delta=500.0,
         estimated_service_delta=0.1,

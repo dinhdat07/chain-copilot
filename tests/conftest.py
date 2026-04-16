@@ -25,7 +25,7 @@ def mock_mock_apis(monkeypatch):
 
             class MockResponse:
                 def json(self):
-                    return {"routes": [{"route_id": "R1", "status": "Normal"}]}
+                    return {"routes": [{"route_id": "R_BN_HN_MAIN", "status": "Normal"}]}
 
             return MockResponse()
         elif "api/v1/mock/suppliers" in url:
@@ -33,7 +33,7 @@ def mock_mock_apis(monkeypatch):
             class MockResponse:
                 def json(self):
                     return {
-                        "vendors": [{"vendor_id": "SUP_A", "overall_status": "Normal"}]
+                        "vendors": [{"vendor_id": "SUP_BN", "overall_status": "Normal"}]
                     }
 
             return MockResponse()

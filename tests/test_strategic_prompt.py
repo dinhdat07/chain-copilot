@@ -39,7 +39,7 @@ def _make_action(action_type: ActionType = ActionType.REORDER) -> Action:
     return Action(
         action_id="act_reorder_SKU_1",
         action_type=action_type,
-        target_id="SKU_1",
+        target_id="SKU_001",
         reason="test action",
         priority=0.7,
     )

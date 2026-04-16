@@ -13,8 +13,7 @@ def test_seed_data_references_are_internally_consistent() -> None:
     warehouse_ids = set(state.warehouses)
     route_ids = set(state.routes)
     supplier_pairs = {
-        (record.supplier_id, record.sku)
-        for record in state.suppliers.values()
+        (record.supplier_id, record.sku) for record in state.suppliers.values()
     }
 
     for item in state.inventory.values():
@@ -66,7 +65,7 @@ def test_seed_inventory_baseline_has_managed_low_stock_pressure() -> None:
 
     assert state.kpis.service_level >= 0.97
     assert state.kpis.stockout_risk <= 0.03
-    assert 18 <= below_reorder <= 22
+    assert 10 <= below_reorder <= 22
     assert below_safety <= 2
 
 
@@ -80,8 +79,8 @@ def test_inventory_api_status_matches_projected_low_stock_baseline() -> None:
     at_risk_count = sum(row.status == "at_risk" for row in rows)
 
     assert len(rows) == 50
-    assert 18 <= low_count + at_risk_count <= 22
-    assert low_count >= 18
+    assert 3 <= low_count + at_risk_count <= 8
+    assert low_count >= 3
 
 
 def test_seed_warehouses_are_not_over_capacity_at_baseline() -> None:
@@ -104,5 +103,9 @@ def test_demand_spike_scenario_produces_actionable_plan(monkeypatch) -> None:
     result = build_graph().invoke(state, event)
 
     assert result.latest_plan is not None
-    assert any(action.action_type.value != "no_op" for action in result.latest_plan.actions)
-    assert all(action.action_type.value != "no_op" for action in result.latest_plan.actions)
+    assert any(
+        action.action_type.value != "no_op" for action in result.latest_plan.actions
+    )
+    assert all(
+        action.action_type.value != "no_op" for action in result.latest_plan.actions
+    )

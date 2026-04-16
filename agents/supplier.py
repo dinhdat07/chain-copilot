@@ -22,7 +22,7 @@ Write the summary entirely in English. Do NOT use markdown formatting or bullet 
 
         delayed_supplier = (
             event.payload.get("supplier_id")
-            if event and event.type == EventType.SUPPLIER_DELAY
+            if event and event.type in {EventType.SUPPLIER_DELAY, EventType.COMPOUND}
             else None
         )
         for sku, item in state.inventory.items():

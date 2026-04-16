@@ -26,10 +26,10 @@ def _event() -> Event:
         type=EventType.SUPPLIER_DELAY,
         source="test",
         severity=0.82,
-        entity_ids=["SUP_A", "SKU_001"],
+        entity_ids=["SUP_BN", "SKU_001"],
         occurred_at=utc_now(),
         detected_at=utc_now(),
-        payload={"supplier_id": "SUP_A", "sku": "SKU_001", "delay_hours": 48},
+        payload={"supplier_id": "SUP_BN", "sku": "SKU_001", "delay_hours": 48},
         dedupe_key="supplier_delay:SUP_A:SKU_001:48",
     )
 
@@ -54,17 +54,17 @@ def test_vertex_provider_routes_planner_without_fallback(monkeypatch) -> None:
                 "candidate_plans": [
                     {
                         "strategy_label": "cost_first",
-                        "action_ids": ["act_supplier_SKU_001_SUP_B"],
+                        "action_ids": ["act_supplier_SKU_001_SUP_HP"],
                         "rationale": "Use the lower-cost alternate supplier.",
                     },
                     {
                         "strategy_label": "balanced",
-                        "action_ids": ["act_supplier_SKU_001_SUP_B", "act_reroute_SKU_001_R2"],
+                        "action_ids": ["act_supplier_SKU_004_SUP_HP"],
                         "rationale": "Balance supplier and route risk.",
                     },
                     {
                         "strategy_label": "resilience_first",
-                        "action_ids": ["act_reroute_SKU_001_R2", "act_reroute_SKU_003_R2"],
+                        "action_ids": ["act_supplier_SKU_007_SUP_HP"],
                         "rationale": "Protect recovery speed under disruption.",
                     },
                 ]
@@ -88,7 +88,9 @@ def test_vertex_provider_routes_planner_without_fallback(monkeypatch) -> None:
             "notes_for_planner": "Prefer resilient substitutes for disrupted supply.",
         }
 
-    monkeypatch.setattr("llm.service.VertexGeminiClient.generate_json", _fake_generate_json)
+    monkeypatch.setattr(
+        "llm.service.VertexGeminiClient.generate_json", _fake_generate_json
+    )
 
     result = build_graph().invoke(load_initial_state(), _event())
     log = result.decision_logs[-1]
