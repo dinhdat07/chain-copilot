@@ -11,8 +11,8 @@ async def test_realtime_v2():
         try:
             response = await client.post(url, timeout=10.0)
             data = response.json()
-        except Exception as e:
-            print(f"Error: Could not connect to server at localhost:8000. Did you start uvicorn?")
+        except Exception:
+            print("Error: Could not connect to server at localhost:8000. Did you start uvicorn?")
             return
 
     run_id = data["run_id"]

@@ -1,7 +1,6 @@
 import asyncio
 from fastapi import FastAPI, WebSocket
 import uvicorn
-import httpx
 import websockets
 from multiprocessing import Process
 import time

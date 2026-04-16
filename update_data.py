@@ -1,7 +1,6 @@
 import pandas as pd
 import numpy as np
 import random
-import os
 
 random.seed(42)
 np.random.seed(42)
