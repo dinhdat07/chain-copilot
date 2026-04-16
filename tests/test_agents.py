@@ -35,3 +35,34 @@ def test_agents_emit_actions_for_supplier_delay() -> None:
     assert "reorder point" in inventory.domain_summary
     assert supplier.proposals
     assert isinstance(logistics.proposals, list)
+
+
+def test_route_blockage_actions_stay_within_blocked_lane_scope() -> None:
+    state = load_initial_state()
+    event = Event(
+        event_id="evt_route_scope_test",
+        type=EventType.ROUTE_BLOCKAGE,
+        source="test",
+        severity=0.78,
+        entity_ids=["R_BN_HN_MAIN"],
+        occurred_at=utc_now(),
+        detected_at=utc_now(),
+        payload={"route_ids": ["R_BN_HN_MAIN"], "reason": "flooding"},
+        dedupe_key="evt_route_scope_test",
+    )
+
+    logistics = LogisticsAgent().run(state, event)
+    inventory = InventoryAgent().run(state, event)
+
+    logistics_targets = {action.target_id for action in logistics.proposals}
+    inventory_targets = {action.target_id for action in inventory.proposals}
+
+    assert logistics_targets
+    assert all(
+        state.inventory[sku].preferred_route_id == "R_BN_HN_MAIN"
+        for sku in logistics_targets
+    )
+    assert all(
+        state.inventory[sku].preferred_route_id == "R_BN_HN_MAIN"
+        for sku in inventory_targets
+    )

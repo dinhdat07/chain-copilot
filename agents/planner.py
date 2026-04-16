@@ -1100,6 +1100,8 @@ class PlannerAgent(BaseAgent):
             projection_summary=selected_evaluation.projection_summary,
             simulation_horizon_days=selected_evaluation.simulation_horizon_days,
             worst_case_kpis=selected_evaluation.worst_case_kpis,
+            state=state,
+            event=event,
         )
 
         final_plan = Plan(

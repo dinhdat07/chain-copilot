@@ -3,6 +3,7 @@ from __future__ import annotations
 import requests
 
 from agents.base import BaseAgent
+from core.scenario_scope import direct_scope_summary, resolve_scenario_scope
 from core.models import AgentProposal, Event, SystemState
 from policies.modes import select_mode
 
@@ -25,11 +26,12 @@ class RiskAgent(BaseAgent):
         if event is None:
             return "No active disruption."
         affected_skus = scenario_scope.get("affected_skus", [])
+        route_ids = scenario_scope.get("route_ids", [])
+        supplier_ids = scenario_scope.get("supplier_ids", [])
         if event.type.value == "supplier_delay":
-            supplier_id = event.payload.get("supplier_id")
             delay_hours = event.payload.get("delay_hours")
             return (
-                f"Primary scenario: supplier delay at {supplier_id} with a declared delay of {delay_hours} hours "
+                f"Primary scenario: supplier delay at {', '.join(supplier_ids) or 'an unspecified supplier'} with a declared delay of {delay_hours} hours "
                 f"affecting SKUs {', '.join(affected_skus) if affected_skus else 'not specified'}."
             )
         if event.type.value == "demand_spike":
@@ -43,46 +45,36 @@ class RiskAgent(BaseAgent):
                 "Primary scenario: demand spike affecting only the declared SKU set"
                 f" ({change_text or ', '.join(affected_skus)})."
             )
+        if event.type.value == "route_blockage":
+            return (
+                f"Primary scenario: route blockage on {', '.join(route_ids) or 'the declared lanes'} "
+                f"directly affecting SKUs {', '.join(affected_skus) if affected_skus else 'derived from current route dependencies'}."
+            )
+        if event.type.value == "compound":
+            return (
+                f"Primary scenario: compound disruption across routes {', '.join(route_ids) or 'none declared'} "
+                f"and suppliers {', '.join(supplier_ids) or 'none declared'}, with direct impact on "
+                f"{', '.join(affected_skus) if affected_skus else 'the declared entities'}."
+            )
         return (
             f"Primary scenario: {event.type.value.replace('_', ' ')} affecting "
             f"{', '.join(affected_skus) if affected_skus else 'the declared entities'}."
         )
 
-    @staticmethod
-    def _scenario_scope(event: Event | None) -> dict[str, object]:
-        if event is None:
-            return {"affected_skus": [], "demand_changes": []}
-        affected_skus = [
-            str(sku) for sku in event.payload.get("affected_skus", []) if sku
-        ]
-        demand_changes = event.payload.get("demand_changes")
-        if not affected_skus and isinstance(demand_changes, list):
-            affected_skus = [
-                str(item.get("sku"))
-                for item in demand_changes
-                if isinstance(item, dict) and item.get("sku")
-            ]
-        if not affected_skus and event.payload.get("sku"):
-            affected_skus = [str(event.payload.get("sku"))]
-        return {
-            "affected_skus": affected_skus,
-            "demand_changes": demand_changes
-            if isinstance(demand_changes, list)
-            else [],
-        }
-
     def run(self, state: SystemState, event: Event | None = None) -> AgentProposal:
         proposal = AgentProposal(agent=self.name)
         state.mode = select_mode(state, event)
         api_payloads = {}
-        scenario_scope = self._scenario_scope(event)
+        resolved_scope = resolve_scenario_scope(state, event)
+        scenario_scope = resolved_scope.to_dict()
         scenario_brief = self._scenario_brief(event, scenario_scope)
         if event is None:
             proposal.domain_summary = f"Risk review completed with no incoming disruption. Current operating mode is {state.mode.value}."
         else:
             proposal.domain_summary = (
                 f"{event.type.value.replace('_', ' ').title()} requires risk review for "
-                f"{', '.join(event.entity_ids) if event.entity_ids else 'the network'}."
+                f"{', '.join(event.entity_ids) if event.entity_ids else 'the network'}. "
+                f"{direct_scope_summary(resolved_scope)}"
             )
 
         # 1. Fetch Weather API

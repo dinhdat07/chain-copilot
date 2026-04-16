@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 
+from core.scenario_scope import payload_route_ids, payload_supplier_ids
 from core.enums import ActionType, ConstraintViolationCode, EventType, Mode
 from core.models import Event, Plan, SystemState, SupplierRecord, ConstraintViolation as Violation
 
@@ -37,24 +38,24 @@ def mode_rationale(state: SystemState, event: Event | None) -> str:
 # ---------------------------------------------------------------------------
 
 def _blocked_routes(state: SystemState, event: Event | None) -> set[str]:
-    blocked = {
-        item.payload.get("route_id")
-        for item in state.active_events
-        if item.type in {EventType.ROUTE_BLOCKAGE, EventType.COMPOUND}
-    }
+    blocked: set[str] = set()
+    for item in state.active_events:
+        if item.type not in {EventType.ROUTE_BLOCKAGE, EventType.COMPOUND}:
+            continue
+        blocked.update(payload_route_ids(item))
     if event is not None and event.type in {EventType.ROUTE_BLOCKAGE, EventType.COMPOUND}:
-        blocked.add(event.payload.get("route_id"))
+        blocked.update(payload_route_ids(event))
     return {item for item in blocked if item}
 
 
 def _delayed_suppliers(state: SystemState, event: Event | None) -> set[str]:
-    delayed = {
-        item.payload.get("supplier_id")
-        for item in state.active_events
-        if item.type in {EventType.SUPPLIER_DELAY, EventType.COMPOUND}
-    }
+    delayed: set[str] = set()
+    for item in state.active_events:
+        if item.type not in {EventType.SUPPLIER_DELAY, EventType.COMPOUND}:
+            continue
+        delayed.update(payload_supplier_ids(item))
     if event is not None and event.type in {EventType.SUPPLIER_DELAY, EventType.COMPOUND}:
-        delayed.add(event.payload.get("supplier_id"))
+        delayed.update(payload_supplier_ids(event))
     return {item for item in delayed if item}
 
 

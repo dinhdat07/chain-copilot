@@ -22,6 +22,7 @@ from core.models import (
     TraceStep,
 )
 from core.runtime_tracking import new_run_id
+from core.scenario_scope import resolve_scenario_scope
 from core.state import recompute_kpis, utc_now
 from langgraph.graph import END, START, StateGraph
 from orchestrator.router import (
@@ -460,6 +461,7 @@ class LangGraphControlTower:
         state = graph_state["state"]
         event = graph_state.get("event")
         trace_updater = graph_state.get("trace_updater")
+        scope = resolve_scenario_scope(state, event)
 
         sku_count = len(state.inventory)
         self._emit(
@@ -475,15 +477,11 @@ class LangGraphControlTower:
         self._notify_trace_update(state, trace_updater)
 
         # Step 1: Check for demand spike event
-        has_spike = event and event.type.value == "demand_spike"
+        has_spike = event and event.type.value in {"demand_spike", "compound"}
         if has_spike:
-            demand_changes = event.payload.get("demand_changes") or []
-            if isinstance(demand_changes, list) and demand_changes:
-                sku_list = [
-                    str(item.get("sku"))
-                    for item in demand_changes
-                    if isinstance(item, dict) and item.get("sku")
-                ]
+            demand_changes = scope.demand_changes
+            if demand_changes:
+                sku_list = [str(item["sku"]) for item in demand_changes]
                 preview = ", ".join(sku_list[:3])
                 self._emit(
                     graph_state,
@@ -582,14 +580,21 @@ class LangGraphControlTower:
         trace_updater = graph_state.get("trace_updater")
 
         # Step 1: Initial scan
+        scope = resolve_scenario_scope(state, event)
+        inventory_focus = set(scope.affected_skus)
+        scoped_items = [
+            item
+            for sku, item in state.inventory.items()
+            if not inventory_focus or sku in inventory_focus
+        ]
         critical_skus = sum(
             1
-            for item in state.inventory.values()
+            for item in scoped_items
             if item.on_hand + item.incoming_qty - item.forecast_qty < item.reorder_point
         )
         below_safety = sum(
             1
-            for item in state.inventory.values()
+            for item in scoped_items
             if item.on_hand + item.incoming_qty - item.forecast_qty < item.safety_stock
         )
         self._emit(
@@ -599,9 +604,10 @@ class LangGraphControlTower:
             step="init",
             message=f"Inventory Agent checking {len(state.inventory)} SKUs",
             data={
-                "sku_count": len(state.inventory),
+                "sku_count": len(scoped_items),
                 "critical_skus": critical_skus,
                 "below_safety": below_safety,
+                "direct_scope_skus": len(inventory_focus),
             },
         )
 
@@ -691,6 +697,7 @@ class LangGraphControlTower:
         trace_updater = graph_state.get("trace_updater")
 
         supplier_count = len(state.suppliers)
+        scope = resolve_scenario_scope(state, event)
         self._emit(
             graph_state,
             type="start",
@@ -704,26 +711,18 @@ class LangGraphControlTower:
         self._notify_trace_update(state, trace_updater)
 
         # Step 1: Detecting delayed suppliers
-        delayed_supplier = (
-            event.payload.get("supplier_id")
-            if event and event.type.value == "supplier_delay"
-            else None
-        )
-        if delayed_supplier:
-            affected_skus = event.payload.get("affected_skus") or []
-            affected_count = (
-                len(affected_skus) if isinstance(affected_skus, list) else 0
-            )
+        delayed_suppliers = scope.supplier_ids
+        if delayed_suppliers:
             self._emit(
                 graph_state,
                 type="analysis",
                 agent="supplier",
                 step="delay_detection",
-                message=f"Supplier delay detected: {delayed_supplier} impacting {affected_count or 1} SKU(s)",
+                message=f"Supplier disruption detected across {len(delayed_suppliers)} supplier(s) impacting {len(scope.supplier_affected_skus or scope.affected_skus)} SKU(s)",
                 data={
-                    "delayed_supplier": delayed_supplier,
+                    "delayed_suppliers": delayed_suppliers,
                     "event_type": event.type.value,
-                    "affected_skus": affected_skus,
+                    "affected_skus": scope.supplier_affected_skus or scope.affected_skus,
                 },
             )
         else:
@@ -805,6 +804,7 @@ class LangGraphControlTower:
         trace_updater = graph_state.get("trace_updater")
 
         route_count = len(state.routes)
+        scope = resolve_scenario_scope(state, event)
         self._emit(
             graph_state,
             type="start",
@@ -818,20 +818,19 @@ class LangGraphControlTower:
         self._notify_trace_update(state, trace_updater)
 
         # Step 1: Route blockage detection
-        blocked_route = (
-            event.payload.get("route_id")
-            if event and event.type.value == "route_blockage"
-            else None
-        )
-        if blocked_route:
+        blocked_routes = scope.route_ids
+        if blocked_routes:
             self._emit(
                 graph_state,
                 type="analysis",
                 agent="logistics",
                 step="blockage_detection",
-                message=f"Route blockage detected on {blocked_route}",
+                message=f"Route blockage detected across {len(blocked_routes)} lane(s) affecting {len(scope.route_affected_skus)} SKU(s)",
                 data={
-                    "blocked_route": blocked_route,
+                    "blocked_routes": blocked_routes,
+                    "affected_skus": scope.route_affected_skus,
+                    "warehouse_ids": scope.warehouse_ids,
+                    "node_ids": scope.node_ids,
                     "reason": event.payload.get("reason", "unknown"),
                 },
             )
@@ -1397,6 +1396,7 @@ class LangGraphControlTower:
             "logistics",
             route_after_logistics,
             {
+                "inventory": "inventory",
                 "supplier": "supplier",
                 "planner": "planner",
             },
@@ -1405,6 +1405,7 @@ class LangGraphControlTower:
             "supplier",
             route_after_supplier,
             {
+                "demand": "demand",
                 "inventory": "inventory",
                 "logistics": "logistics",
                 "planner": "planner",

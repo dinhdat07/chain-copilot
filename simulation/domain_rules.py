@@ -2,6 +2,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from core.scenario_scope import (
+    payload_demand_changes,
+    payload_route_ids,
+    payload_supplier_ids,
+    resolve_scenario_scope,
+)
 from core.enums import ActionType, EventType
 from core.models import Action, Event, InventoryItem, SystemState
 from core.state import recompute_kpis
@@ -38,39 +44,24 @@ def _event_type(event: Event | None) -> EventType | None:
 def _affected_skus(event: Event | None) -> set[str]:
     if event is None:
         return set()
-    affected = event.payload.get("affected_skus")
-    if isinstance(affected, list) and affected:
-        return {str(sku) for sku in affected if sku}
-    changes = event.payload.get("demand_changes")
-    if isinstance(changes, list) and changes:
-        return {
-            str(item.get("sku"))
-            for item in changes
-            if isinstance(item, dict) and item.get("sku")
-        }
-    sku = event.payload.get("sku")
-    return {str(sku)} if sku else set()
+    return {
+        str(item["sku"])
+        for item in payload_demand_changes(event)
+        if str(item.get("sku") or "").strip()
+    } | {
+        str(sku)
+        for sku in event.payload.get("affected_skus", [])
+        if str(sku).strip()
+    } | ({str(event.payload.get("sku"))} if event.payload.get("sku") else set())
 
 
 def _demand_change_map(event: Event | None) -> dict[str, float]:
-    if event is None or event.type != EventType.DEMAND_SPIKE:
+    if event is None or event.type not in {EventType.DEMAND_SPIKE, EventType.COMPOUND}:
         return {}
-    changes = event.payload.get("demand_changes")
-    if isinstance(changes, list) and changes:
-        result: dict[str, float] = {}
-        for item in changes:
-            if not isinstance(item, dict):
-                continue
-            sku = str(item.get("sku") or "").strip()
-            if not sku:
-                continue
-            result[sku] = float(item.get("multiplier", 1.0))
-        if result:
-            return result
-    sku = str(event.payload.get("sku") or "").strip()
-    if not sku:
-        return {}
-    return {sku: float(event.payload.get("multiplier", 1.0))}
+    return {
+        str(item["sku"]): float(item.get("multiplier", 1.0))
+        for item in payload_demand_changes(event)
+    }
 
 
 def _event_penalty_days(
@@ -85,20 +76,16 @@ def _event_penalty_days(
         2 if event.severity >= 0.85 else 1 if event.severity >= 0.55 else 0
     )
     if event.type == EventType.SUPPLIER_DELAY:
-        affected_supplier = str(event.payload.get("supplier_id") or "")
-        if supplier_id and supplier_id == affected_supplier:
+        affected_suppliers = set(payload_supplier_ids(event))
+        if supplier_id and supplier_id in affected_suppliers:
             return max(1, severity_penalty)
     if event.type == EventType.ROUTE_BLOCKAGE:
-        affected_route = str(event.payload.get("route_id") or "")
-        if route_id and route_id == affected_route:
+        affected_routes = set(payload_route_ids(event))
+        if route_id and route_id in affected_routes:
             return max(1, severity_penalty)
     if event.type == EventType.COMPOUND:
-        supplier_match = supplier_id and supplier_id in {
-            str(value) for value in event.payload.get("supplier_ids", [])
-        }
-        route_match = route_id and route_id in {
-            str(value) for value in event.payload.get("route_ids", [])
-        }
+        supplier_match = supplier_id and supplier_id in set(payload_supplier_ids(event))
+        route_match = route_id and route_id in set(payload_route_ids(event))
         if supplier_match or route_match:
             return max(1, severity_penalty)
     return 0
@@ -241,7 +228,7 @@ def advance_demand(
     state = context.working_state
     event_type = _event_type(event)
     demand_changes = _demand_change_map(event)
-    if event_type != EventType.DEMAND_SPIKE or not demand_changes:
+    if event_type not in {EventType.DEMAND_SPIKE, EventType.COMPOUND} or not demand_changes:
         for sku, item in state.inventory.items():
             item.forecast_qty = context.baseline_forecast_by_sku.get(
                 sku, item.forecast_qty
@@ -268,7 +255,8 @@ def advance_supplier(
         return observations
     if event.type not in {EventType.SUPPLIER_DELAY, EventType.COMPOUND}:
         return observations
-    affected_skus = _affected_skus(event)
+    scope = resolve_scenario_scope(state, event)
+    affected_skus = set(scope.supplier_affected_skus or scope.affected_skus)
     for item in state.inventory.values():
         if affected_skus and item.sku not in affected_skus:
             continue
@@ -291,14 +279,16 @@ def advance_logistics(
         return observations
     if event.type not in {EventType.ROUTE_BLOCKAGE, EventType.COMPOUND}:
         return observations
-    affected_skus = _affected_skus(event)
+    scope = resolve_scenario_scope(state, event)
+    affected_skus = set(scope.route_affected_skus or scope.affected_skus)
+    blocked_routes = set(scope.route_ids)
     for item in state.inventory.values():
         if affected_skus and item.sku not in affected_skus:
             continue
         route = _route_for_item(state, item)
         if route is None:
             continue
-        if route.status == "blocked":
+        if route.route_id in blocked_routes or route.status == "blocked":
             observations.append(
                 f"{item.sku} remains exposed to blocked route {route.route_id}"
             )
@@ -401,6 +391,10 @@ def dominant_constraint(
     context: SimulationContext, step_metrics: dict[str, int]
 ) -> str:
     state = context.working_state
+    active_event = state.active_events[-1] if state.active_events else None
+    scope = resolve_scenario_scope(state, active_event)
+    blocked_routes = set(scope.route_ids)
+    delayed_suppliers = set(scope.supplier_ids)
     if step_metrics["inventory_out_of_stock"] > 0:
         return "inventory shortfall"
     if step_metrics["backlog_units"] > 0:
@@ -408,7 +402,10 @@ def dominant_constraint(
     if any(
         (
             _route_for_item(state, item) is not None
-            and _route_for_item(state, item).status == "blocked"
+            and (
+                _route_for_item(state, item).status == "blocked"
+                or _route_for_item(state, item).route_id in blocked_routes
+            )
         )
         for item in state.inventory.values()
     ):
@@ -416,7 +413,10 @@ def dominant_constraint(
     if any(
         (
             _supplier_for_item(state, item) is not None
-            and _supplier_for_item(state, item).reliability < 0.85
+            and (
+                _supplier_for_item(state, item).reliability < 0.85
+                or _supplier_for_item(state, item).supplier_id in delayed_suppliers
+            )
         )
         for item in state.inventory.values()
     ):

@@ -5,6 +5,7 @@ from collections import defaultdict
 import pandas as pd
 
 from agents.base import BaseAgent
+from core.scenario_scope import payload_demand_changes, resolve_scenario_scope
 from core.enums import ActionType, EventType
 from core.models import Action, AgentProposal, Event, SystemState
 
@@ -19,24 +20,14 @@ When a disruption or event occurs (like a DEMAND_SPIKE), you evaluate how it imp
 
     @staticmethod
     def _event_demand_changes(event: Event | None) -> dict[str, float]:
-        if event is None or event.type != EventType.DEMAND_SPIKE:
+        if event is None:
             return {}
-        changes = event.payload.get("demand_changes")
-        if isinstance(changes, list) and changes:
-            result: dict[str, float] = {}
-            for item in changes:
-                if not isinstance(item, dict):
-                    continue
-                sku = str(item.get("sku") or "").strip()
-                if not sku:
-                    continue
-                result[sku] = float(item.get("multiplier", 1.0))
-            if result:
-                return result
-        sku = str(event.payload.get("sku") or "").strip()
-        if not sku:
+        if event.type not in {EventType.DEMAND_SPIKE, EventType.COMPOUND}:
             return {}
-        return {sku: float(event.payload.get("multiplier", 1.5))}
+        return {
+            str(item["sku"]): float(item.get("multiplier", 1.0))
+            for item in payload_demand_changes(event)
+        }
 
     def run(self, state: SystemState, event: Event | None = None) -> AgentProposal:
         proposal = AgentProposal(agent=self.name)
@@ -45,7 +36,8 @@ When a disruption or event occurs (like a DEMAND_SPIKE), you evaluate how it imp
             grouped[demand.sku].append((demand.day_index, demand.quantity))
 
         event_changes = self._event_demand_changes(event)
-        affected_skus = set(event_changes)
+        scope = resolve_scenario_scope(state, event)
+        affected_skus = set(scope.demand_affected_skus or event_changes)
         for sku, multiplier in event_changes.items():
             proposal.observations.append(
                 f"{sku} demand spike multiplier applied: {multiplier:.2f}"
@@ -74,7 +66,7 @@ When a disruption or event occurs (like a DEMAND_SPIKE), you evaluate how it imp
                     f"{sku} historical demand (30 days): Avg = {forecast}, Std Dev = {std_d_val:.2f}"
                 )
 
-        if event and event.type == EventType.DEMAND_SPIKE:
+        if event and event.type in {EventType.DEMAND_SPIKE, EventType.COMPOUND}:
             for event_sku in affected_skus:
                 if event_sku not in state.inventory:
                     continue
@@ -115,6 +107,7 @@ When a disruption or event occurs (like a DEMAND_SPIKE), you evaluate how it imp
                 state_slice={
                     "event_skus": sorted(affected_skus),
                     "demand_changes": event_changes,
+                    "scenario_scope": scope.to_dict(),
                     "affected_inventory": affected_inventory,
                 },
             )

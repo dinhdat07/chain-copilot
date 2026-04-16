@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from core.scenario_scope import direct_scope_summary, resolve_scenario_scope
 from core.enums import EventType
 from core.models import (
     Action,
@@ -27,27 +28,10 @@ from simulation.domain_rules import (
 )
 
 
-def _event_scope_label(event: Event | None) -> str:
+def _event_scope_label(state: SystemState, event: Event | None) -> str:
     if event is None:
         return ""
-    affected = event.payload.get("affected_skus")
-    if isinstance(affected, list) and affected:
-        sku_text = ", ".join(str(sku) for sku in affected[:4])
-        return f"The direct scenario scope covers {len(affected)} supplier-affected SKU(s): {sku_text}."
-    changes = event.payload.get("demand_changes")
-    if isinstance(changes, list) and changes:
-        skus = [
-            str(item.get("sku"))
-            for item in changes
-            if isinstance(item, dict) and item.get("sku")
-        ]
-        if skus:
-            sku_text = ", ".join(skus[:4])
-            return f"The direct scenario scope covers {len(skus)} demand-affected SKU(s): {sku_text}."
-    sku = event.payload.get("sku")
-    if sku:
-        return f"The direct scenario scope centers on SKU {sku}."
-    return ""
+    return direct_scope_summary(resolve_scenario_scope(state, event))
 
 
 @dataclass
@@ -70,6 +54,7 @@ def evaluate_candidate_plan(
 ) -> CandidateProjection:
     projected_state = clone_state(state)
     projected_event = event.model_copy(deep=True) if event is not None else None
+    baseline_scope_summary = _event_scope_label(state, event)
     if projected_event is not None and projected_state.active_events:
         projected_state.active_events[-1] = projected_event
     context = initialize_context(projected_state, projected_event)
@@ -107,6 +92,8 @@ def evaluate_candidate_plan(
         stockout_values.append(step_kpis.stockout_risk)
 
         key_changes = supplier_notes[:2] + route_notes[:2]
+        if step_index == 1 and baseline_scope_summary:
+            key_changes.insert(0, baseline_scope_summary)
         if step_metrics["inbound_units_due"] > 0:
             key_changes.append(
                 f"{step_metrics['inbound_units_due']} units landed into the network"
@@ -151,6 +138,7 @@ def evaluate_candidate_plan(
         projected_event=projected_event,
     )
     projection_summary = _projection_summary(
+        state=state,
         projected_steps=projection_steps,
         projected_kpis=projected_kpis,
         worst_case_kpis=worst_case_kpis,
@@ -201,6 +189,7 @@ def _projected_state_summary(
 
 def _projection_summary(
     *,
+    state: SystemState,
     projected_steps: list[ProjectionStep],
     projected_kpis: KPIState,
     worst_case_kpis: KPIState,
@@ -227,9 +216,11 @@ def _projection_summary(
             EventType.COMPOUND,
         }:
             event_text = " Mitigation quality determines whether disruption severity decays fast enough."
-    scope_text = _event_scope_label(event)
+    scope_text = ""
+    if event is not None:
+        scope_text = _event_scope_label(state, event)
     return (
-        f"{scope_text} Over the next {len(projected_steps)} day(s), network-wide service bottoms at "
+        f"{scope_text} Over the next {len(projected_steps)} day(s), projected network-wide service bottoms at "
         f"{worst_case_kpis.service_level:.0%} on {worst_service_step.label} while disruption risk peaks at "
         f"{worst_case_kpis.disruption_risk:.0%} on {highest_risk_step.label}. "
         f"By {projected_steps[-1].label}, the plan projects service at {projected_kpis.service_level:.0%}, "

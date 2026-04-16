@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import defaultdict
 
 from agents.base import BaseAgent
+from core.scenario_scope import payload_supplier_ids, resolve_scenario_scope
 from core.enums import ActionType, EventType
 from core.models import Action, AgentProposal, Event, SystemState
 
@@ -14,34 +15,17 @@ When supplier delays or disruptions occur, your job is to analyze alternative su
     Provide a concise, professional summary (under 4 sentences) of the supplier issues, your evaluation of the alternatives, and the recommended supplier switch.
     Write the summary entirely in English. Do NOT use markdown formatting or bullet points in the summary."""
 
-    @staticmethod
-    def _affected_skus(event: Event | None) -> set[str]:
-        if event is None:
-            return set()
-        if event.payload.get("affected_skus"):
-            return {str(sku) for sku in event.payload.get("affected_skus", []) if sku}
-        changes = event.payload.get("demand_changes")
-        if isinstance(changes, list) and changes:
-            return {
-                str(item.get("sku"))
-                for item in changes
-                if isinstance(item, dict) and item.get("sku")
-            }
-        sku = event.payload.get("sku")
-        return {str(sku)} if sku else set()
-
     def run(self, state: SystemState, event: Event | None = None) -> AgentProposal:
         proposal = AgentProposal(agent=self.name)
         by_sku: dict[str, list] = defaultdict(list)
         for supplier in state.suppliers.values():
             by_sku[supplier.sku].append(supplier)
 
-        delayed_supplier = (
-            event.payload.get("supplier_id")
-            if event and event.type in {EventType.SUPPLIER_DELAY, EventType.COMPOUND}
-            else None
-        )
-        affected_skus = self._affected_skus(event)
+        delayed_suppliers = set(payload_supplier_ids(event))
+        scope = resolve_scenario_scope(state, event)
+        affected_skus = set(scope.supplier_affected_skus)
+        if event and event.type == EventType.SUPPLIER_DELAY:
+            affected_skus = affected_skus or set(scope.affected_skus)
         for sku, item in state.inventory.items():
             if affected_skus and sku not in affected_skus:
                 continue
@@ -61,7 +45,7 @@ When supplier delays or disruptions occur, your job is to analyze alternative su
                 proposal.risks.append(f"no suppliers available for {sku}")
                 continue
             best = ranked[0]
-            if best.supplier_id == delayed_supplier and len(ranked) > 1:
+            if best.supplier_id in delayed_suppliers and len(ranked) > 1:
                 best = ranked[1]
             if current_supplier and best.supplier_id != current_supplier.supplier_id:
                 cost_delta = best.unit_cost - current_supplier.unit_cost
@@ -78,12 +62,12 @@ When supplier delays or disruptions occur, your job is to analyze alternative su
                         if best.reliability >= current_supplier.reliability
                         else 0.02,
                         estimated_risk_delta=-0.12
-                        if best.supplier_id != delayed_supplier
+                        if best.supplier_id not in delayed_suppliers
                         else -0.02,
                         estimated_recovery_hours=float(best.lead_time_days * 12),
                         reason=f"switch {sku} from {current_supplier.supplier_id} to {best.supplier_id}",
                         priority=0.9
-                        if delayed_supplier == current_supplier.supplier_id
+                        if current_supplier.supplier_id in delayed_suppliers
                         else 0.55,
                     )
                 )
@@ -110,8 +94,9 @@ When supplier delays or disruptions occur, your job is to analyze alternative su
                 event=event,
                 proposal=proposal,
                 state_slice={
-                    "delayed_supplier": delayed_supplier,
+                    "delayed_suppliers": sorted(delayed_suppliers),
                     "affected_skus": sorted(affected_skus),
+                    "scenario_scope": scope.to_dict(),
                     "supplier_options": supplier_snapshot,
                 },
             )

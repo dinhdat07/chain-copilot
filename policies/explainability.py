@@ -1,16 +1,26 @@
 from __future__ import annotations
 
+from core.scenario_scope import direct_scope_summary, resolve_scenario_scope
 from core.enums import Mode
 from core.models import (
     Action,
     CandidatePlanEvaluation,
     ConstraintViolation as Violation,
+    Event,
     KPIState,
     Plan,
+    SystemState,
 )
 
 
-def _scenario_scope_text(selected_actions: list[Action]) -> str:
+def _scenario_scope_text(
+    selected_actions: list[Action],
+    *,
+    state: SystemState | None = None,
+    event: Event | None = None,
+) -> str:
+    if state is not None and event is not None:
+        return direct_scope_summary(resolve_scenario_scope(state, event))
     if not selected_actions:
         return ""
     targets = []
@@ -68,6 +78,8 @@ def build_plan_summary(
     projection_summary: str = "",
     simulation_horizon_days: int | None = None,
     worst_case_kpis: KPIState | None = None,
+    state: SystemState | None = None,
+    event: Event | None = None,
 ) -> str:
     selected_actions = selected_actions or []
     action_text = (
@@ -95,7 +107,7 @@ def build_plan_summary(
             f"worst disruption risk reaches {_pct(worst_case_kpis.disruption_risk)}."
         )
     projection_text = f" {projection_summary}" if projection_summary else ""
-    scope_text = _scenario_scope_text(selected_actions)
+    scope_text = _scenario_scope_text(selected_actions, state=state, event=event)
     return (
         f"Selected {strategy_label or 'current'} strategy using {action_text}. "
         f"{scope_text} "
@@ -211,6 +223,9 @@ def explain_rejected_actions(
 def build_critic_review(
     selected_plan: Plan,
     evaluations: list[CandidatePlanEvaluation],
+    *,
+    state: SystemState | None = None,
+    event: Event | None = None,
 ) -> tuple[str, list[str]]:
     selected = next(
         (
@@ -236,8 +251,12 @@ def build_critic_review(
         ", ".join(_action_label(action) for action in selected_plan.actions[:3])
         or "no-op coverage"
     )
-    scope_text = _scenario_scope_text(selected_plan.actions)
-    scope_targets = _scenario_scope_targets(selected_plan.actions)
+    scope_text = _scenario_scope_text(selected_plan.actions, state=state, event=event)
+    scope_targets = (
+        resolve_scenario_scope(state, event).affected_skus
+        if state is not None and event is not None
+        else _scenario_scope_targets(selected_plan.actions)
+    )
     summary = (
         f"Reviewer assessment: the {selected_plan.strategy_label or 'selected'} plan is reasonable because it uses "
         f"{action_labels} to support the current operating objective."

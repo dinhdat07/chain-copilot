@@ -4,7 +4,8 @@ import math
 from collections import Counter
 
 from agents.base import BaseAgent
-from core.enums import ActionType, EventType
+from core.scenario_scope import resolve_scenario_scope
+from core.enums import ActionType
 from core.models import Action, AgentProposal, Event, SystemState
 
 
@@ -26,30 +27,12 @@ Be specific about stock position, expected demand, days of cover, reorder point,
     If replenishment is proposed, explain why that action is better than waiting.
     Do not invent inventory math, customer orders, or supplier facts that are not in the provided state."""
 
-    @staticmethod
-    def _affected_skus(event: Event | None) -> set[str]:
-        if event is None:
-            return set()
-        if event.payload.get("affected_skus"):
-            return {str(sku) for sku in event.payload.get("affected_skus", []) if sku}
-        if event.type == EventType.DEMAND_SPIKE:
-            changes = event.payload.get("demand_changes")
-            if isinstance(changes, list) and changes:
-                return {
-                    str(item.get("sku"))
-                    for item in changes
-                    if isinstance(item, dict) and item.get("sku")
-                }
-            sku = event.payload.get("sku")
-            return {str(sku)} if sku else set()
-        sku = event.payload.get("sku")
-        return {str(sku)} if sku else set()
-
     def run(self, state: SystemState, event: Event | None = None) -> AgentProposal:
         proposal = AgentProposal(agent=self.name)
         sku_order_counts = Counter(order.sku for order in state.orders)
         risk_rows: list[dict[str, object]] = []
-        affected_skus = self._affected_skus(event)
+        scope = resolve_scenario_scope(state, event)
+        affected_skus = set(scope.affected_skus)
         for sku, item in state.inventory.items():
             if affected_skus and sku not in affected_skus:
                 continue
@@ -170,7 +153,7 @@ Be specific about stock position, expected demand, days of cover, reorder point,
                 else "limited demand visibility"
             )
             proposal.domain_summary = (
-                f"Inventory pressure is concentrated on {top['name']} ({top['sku']}). "
+                f"Inventory pressure is concentrated on {top['name']} ({top['sku']}) within the direct disruption scope. "
                 f"Projected stock falls to {int(top['projected_stock'])} units versus a reorder point of {int(top['reorder_point'])} "
                 f"and safety stock of {int(top['safety_stock'])}. At the current demand pace, that leaves {coverage_text}. "
                 f"The main driver is {top['root_cause']}; if no action is taken, stock availability could tighten within the next replenishment cycle{order_text}."
@@ -210,6 +193,7 @@ Be specific about stock position, expected demand, days of cover, reorder point,
                 event=event,
                 proposal=proposal,
                 state_slice={
+                    "scenario_scope": scope.to_dict(),
                     "inventory_focus": ranked_rows[:5],
                     "critical_sku_count": len(critical_rows),
                     "proposed_reorders": [
