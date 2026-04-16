@@ -35,8 +35,8 @@ def test_runs_list_returns_latest_first(tmp_path: Path) -> None:
             "event_type": "supplier_delay",
             "source": "api",
             "severity": 0.9,
-            "entity_ids": ["SKU_1", "SUP_A"],
-            "payload": {"supplier_id": "SUP_A", "sku": "SKU_1", "delay_hours": 48},
+            "entity_ids": ["SKU_001", "SUP_BN"],
+            "payload": {"supplier_id": "SUP_BN", "sku": "SKU_001", "delay_hours": 48},
         },
     )
     assert second.status_code == 200
@@ -66,8 +66,8 @@ def test_run_state_returns_historical_snapshot(tmp_path: Path) -> None:
             "event_type": "supplier_delay",
             "source": "api",
             "severity": 0.9,
-            "entity_ids": ["SKU_1", "SUP_A"],
-            "payload": {"supplier_id": "SUP_A", "sku": "SKU_1", "delay_hours": 48},
+            "entity_ids": ["SKU_001", "SUP_BN"],
+            "payload": {"supplier_id": "SUP_BN", "sku": "SKU_001", "delay_hours": 48},
         },
     )
     assert crisis.status_code == 200

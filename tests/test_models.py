@@ -21,7 +21,7 @@ def test_event_rejects_backwards_detection_time() -> None:
             type=EventType.SUPPLIER_DELAY,
             source="test",
             severity=0.5,
-            entity_ids=["SUP_A"],
+            entity_ids=["SUP_BN"],
             occurred_at=datetime(2026, 4, 8, tzinfo=timezone.utc),
             detected_at=datetime(2026, 4, 7, tzinfo=timezone.utc),
             payload={},

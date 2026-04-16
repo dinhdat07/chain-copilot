@@ -49,8 +49,8 @@ def test_langgraph_approval_path_leaves_pending_plan() -> None:
     event = _event(
         EventType.COMPOUND,
         0.92,
-        {"supplier_id": "SUP_A", "route_id": "R1", "sku": "SKU_1"},
-        ["SUP_A", "R1", "SKU_1"],
+        {"supplier_id": "SUP_BN", "route_id": "R_BN_HN_MAIN", "sku": "SKU_001"},
+        ["SUP_BN", "R_BN_HN_MAIN", "SKU_001"],
     )
     result = build_graph().invoke(state, event)
     assert result.mode == Mode.APPROVAL

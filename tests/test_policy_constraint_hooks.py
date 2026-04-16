@@ -43,8 +43,8 @@ def test_constraints_detect_blocked_route_and_capacity_overflow() -> None:
     event = _event(
         EventType.ROUTE_BLOCKAGE,
         0.78,
-        {"route_id": "R1", "reason": "flooding"},
-        ["R1"],
+        {"route_id": "R_BN_HN_MAIN", "reason": "flooding"},
+        ["R_BN_HN_MAIN"],
     )
     violations = evaluate_plan_constraints(
         state=state,
@@ -54,7 +54,7 @@ def test_constraints_detect_blocked_route_and_capacity_overflow() -> None:
                 action_id="act_reroute_blocked",
                 action_type=ActionType.REROUTE,
                 target_id="SKU_001",
-                parameters={"route_id": "R1"},
+                parameters={"route_id": "R_BN_HN_MAIN"},
             ),
             Action(
                 action_id="act_reorder_overflow",
@@ -74,15 +74,15 @@ def test_planner_excludes_infeasible_candidates_before_selection() -> None:
     event = _event(
         EventType.ROUTE_BLOCKAGE,
         0.78,
-        {"route_id": "R1", "reason": "flooding"},
-        ["R1"],
+        {"route_id": "R_BN_HN_MAIN", "reason": "flooding"},
+        ["R_BN_HN_MAIN"],
     )
     state.candidate_actions = [
         Action(
             action_id="act_reroute_blocked",
             action_type=ActionType.REROUTE,
-            target_id="SKU_1",
-            parameters={"route_id": "R1"},
+            target_id="SKU_001",
+            parameters={"route_id": "R_BN_HN_MAIN"},
             estimated_cost_delta=8.0,
             estimated_service_delta=0.05,
             estimated_risk_delta=-0.1,
@@ -124,8 +124,8 @@ def test_policy_fields_surface_through_api(tmp_path: Path) -> None:
             "event_type": "supplier_delay",
             "source": "api",
             "severity": 0.8,
-            "entity_ids": ["SUP_A", "SKU_1"],
-            "payload": {"supplier_id": "SUP_A", "sku": "SKU_1", "delay_hours": 48},
+            "entity_ids": ["SUP_BN", "SKU_001"],
+            "payload": {"supplier_id": "SUP_BN", "sku": "SKU_001", "delay_hours": 48},
         },
     )
     assert response.status_code == 200
@@ -150,7 +150,7 @@ def test_mode_rationale_explains_crisis_switch() -> None:
     event = _event(
         EventType.COMPOUND,
         0.92,
-        {"supplier_id": "SUP_A", "route_id": "R1", "sku": "SKU_1"},
-        ["SUP_A", "R1", "SKU_1"],
+        {"supplier_id": "SUP_BN", "route_id": "R_BN_HN_MAIN", "sku": "SKU_001"},
+        ["SUP_BN", "R_BN_HN_MAIN", "SKU_001"],
     )
     assert "compound disruption" in mode_rationale(state, event)

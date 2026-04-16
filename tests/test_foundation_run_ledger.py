@@ -30,8 +30,8 @@ def test_event_ingest_persists_run_trace_and_execution(tmp_path: Path) -> None:
             "event_type": "supplier_delay",
             "source": "api",
             "severity": 0.9,
-            "entity_ids": ["SKU_1", "SUP_A"],
-            "payload": {"supplier_id": "SUP_A", "sku": "SKU_1", "delay_hours": 48},
+            "entity_ids": ["SKU_001", "SUP_BN"],
+            "payload": {"supplier_id": "SUP_BN", "sku": "SKU_001", "delay_hours": 48},
         },
     )
 

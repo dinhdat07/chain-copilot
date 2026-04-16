@@ -959,7 +959,7 @@ class PlannerAgent(BaseAgent):
             evaluation.unresolved_critical = int(coverage["unresolved_critical"])
 
         if not any(item.feasible for item in evaluations):
-            safe_action = next(action for action in feasible_candidates if action.action_type == ActionType.NO_OP)
+            safe_action = next((action for action in feasible_candidates if action.action_type == ActionType.NO_OP), Action(action_id="act_no_op_fallback", action_type=ActionType.NO_OP, target_id="system", reason="all candidate actions violated hard constraints", priority=0.0))
             evaluations.append(
                 _safe_hold_evaluation(
                     state=state, event=event, before_kpis=before_kpis,

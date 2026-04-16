@@ -3,7 +3,13 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Callable
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    HTTPException,
+    WebSocket,
+    WebSocketDisconnect,
+)
 
 from app_api.schemas import (
     ActionExecutionRecordView,
@@ -182,22 +188,22 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
                 ],
                 "routes": [
                     {
-                        "route_id": "R1",
-                        "summary": "QL5 and AH14",
+                        "route_id": "R_BN_HN_MAIN",
+                        "summary": "QL1A and QL5",
                         "legs": [
                             {
-                                "distance": {"text": "104 km", "value": 104320},
-                                "duration": {"text": "3 hours 45 mins", "value": 13500},
+                                "distance": {"text": "35 km", "value": 35000},
+                                "duration": {"text": "50 mins", "value": 3000},
                                 "duration_in_traffic": {
-                                    "text": "4 hours 10 mins",
-                                    "value": 15000,
+                                    "text": "1 hours 10 mins",
+                                    "value": 4200,
                                 },
                                 "steps": [],
                                 "traffic_speed_entry": [],
                             }
                         ],
                         "warnings": [
-                            "Severe flooding detected on QL5 near Hai Duong.",
+                            "Severe flooding detected on QL1A near Bac Ninh.",
                             "Road closure ahead due to submerged lane.",
                             "Expect heavy delays and consider alternative routing.",
                         ],
@@ -208,14 +214,8 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
                                 "incident_id": "INC_001",
                                 "type": "ROAD_CLOSED",
                                 "description": "Lane submerged due to heavy flood",
-                                "location": {"lat": 20.938611, "lng": 106.314444},
-                            },
-                            {
-                                "incident_id": "INC_002",
-                                "type": "ROAD_CLOSED",
-                                "description": "Traffic accident associated with weather",
-                                "location": {"lat": 20.942150, "lng": 106.321890},
-                            },
+                                "location": {"lat": 21.1861, "lng": 106.0763},
+                            }
                         ],
                     }
                 ],
@@ -225,15 +225,15 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
             "geocoded_waypoints": [],
             "routes": [
                 {
-                    "route_id": "R1",
-                    "summary": "QL5 and AH14",
+                    "route_id": "R_BN_HN_MAIN",
+                    "summary": "QL1A and QL5",
                     "legs": [
                         {
-                            "distance": {"text": "104 km", "value": 104320},
-                            "duration": {"text": "1 hour 50 mins", "value": 6600},
+                            "distance": {"text": "35 km", "value": 35000},
+                            "duration": {"text": "50 mins", "value": 3000},
                             "duration_in_traffic": {
-                                "text": "1 hour 55 mins",
-                                "value": 6900,
+                                "text": "55 mins",
+                                "value": 3300,
                             },
                         }
                     ],
@@ -254,18 +254,18 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
                 "timestamp": "2026-04-13T08:00:00Z",
                 "vendors": [
                     {
-                        "vendor_id": "SUP_A",
-                        "company_name": "Alpha Manufacturing Ltd.",
-                        "region": "Shenzhen, CN",
+                        "vendor_id": "SUP_BN",
+                        "company_name": "Bac Ninh Precision Mfg",
+                        "region": "Bac Ninh, VN",
                         "compliance_score": 0.92,
                         "facilities": [
                             {
-                                "facility_id": "FAC_A1",
+                                "facility_id": "FAC_BN1",
                                 "status": "Operational",
                                 "capacity_utilization": 0.85,
                             },
                             {
-                                "facility_id": "FAC_A2",
+                                "facility_id": "FAC_BN2",
                                 "status": "Degraded",
                                 "capacity_utilization": 0.30,
                                 "active_alerts": [
@@ -277,7 +277,7 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
                                     {
                                         "alert_code": "MATERIAL_DELAY",
                                         "severity": "MEDIUM",
-                                        "message": "Raw material shipments delayed at local port.",
+                                        "message": "Raw material shipments delayed.",
                                     },
                                 ],
                             },
@@ -296,13 +296,13 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
             "timestamp": "2026-04-13T08:00:00Z",
             "vendors": [
                 {
-                    "vendor_id": "SUP_A",
-                    "company_name": "Alpha Manufacturing Ltd.",
-                    "region": "Shenzhen, CN",
+                    "vendor_id": "SUP_BN",
+                    "company_name": "Bac Ninh Precision Mfg",
+                    "region": "Bac Ninh, VN",
                     "compliance_score": 0.94,
                     "facilities": [
                         {
-                            "facility_id": "FAC_A1",
+                            "facility_id": "FAC_BN1",
                             "status": "Operational",
                             "capacity_utilization": 0.78,
                             "active_alerts": [],
@@ -610,13 +610,16 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
         return payload
 
     @router.post("/scenarios/run/stream")
-    def stream_run_scenario(request: ScenarioRequest, background_tasks: BackgroundTasks) -> dict:
+    def stream_run_scenario(
+        request: ScenarioRequest, background_tasks: BackgroundTasks
+    ) -> dict:
         """
         Trigger a scenario run with streaming via WebSocket.
         """
         global MOCK_ENVIRONMENT
         MOCK_ENVIRONMENT = request.scenario_name
         from core.runtime_tracking import new_run_id
+
         run_id = new_run_id()
         background_tasks.add_task(
             _stream_scenario_plan,
@@ -668,6 +671,7 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
         Backward compat: Legacy endpoint POST /plan/daily remains independent.
         """
         from core.runtime_tracking import new_run_id
+
         run_id = new_run_id()
         background_tasks.add_task(_stream_daily_plan, runtime_getter, run_id)
         return {
@@ -679,19 +683,19 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
     async def websocket_thinking_stream(websocket: WebSocket, run_id: str) -> None:
         """
         WebSocket endpoint for real-time thinking/reasoning stream.
-        
+
         Subscribes to the event bus for the given run_id and sends
         a combined payload of the current event and the full trace update.
         """
         from streaming.event_bus import event_bus
-        
+
         await websocket.accept()
         runtime = runtime_getter()
         try:
             async for event in event_bus.subscribe(run_id):
                 if event is None:
                     break
-                
+
                 # Send a combined payload: the specific event + the overall trace snapshot
                 payload = {
                     "event": event.model_dump(mode="json"),
@@ -712,6 +716,7 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
 # ------------------------------------------------------------------
 # Background task helpers (module-level â€” outside create_router)
 # ------------------------------------------------------------------
+
 
 async def _stream_daily_plan(runtime_getter: Callable, run_id: str) -> None:
     """
@@ -794,6 +799,6 @@ async def _stream_scenario_plan(
 def _sync_scenario_with_run_id(
     runtime, run_id: str, scenario_name: str, seed: int
 ) -> None:
-    # run_scenario internally calls graph.invoke via ScenarioRunner 
+    # run_scenario internally calls graph.invoke via ScenarioRunner
     # and handles Saving artifacts
     runtime.run_scenario(scenario_name, seed=seed, run_id=run_id)

@@ -22,7 +22,7 @@ def test_metadata_with_event() -> None:
         "type": "supplier_delay",
         "severity": 0.95,
         "source": "Manual Test",
-        "entity_ids": ["SUP_H_RISKY"],
+        "entity_ids": ["SUP_BN"],
         "payload": {"reason": "Heavy storm at supplier location"},
     }
 

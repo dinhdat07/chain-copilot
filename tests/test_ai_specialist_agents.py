@@ -23,8 +23,8 @@ def test_logistics_agent_uses_llm_ranked_actions(monkeypatch) -> None:
                 "Lower-risk alternate lanes reduce follow-on disruption exposure.",
             ],
             "recommended_action_ids": [
-                "act_reroute_SKU_003_R2",
-                "act_reroute_SKU_001_R2",
+                "act_reroute_SKU_004_R_BN_HN_ALT",
+                "act_reroute_SKU_001_R_BN_HN_ALT",
             ],
             "tradeoffs": [
                 "R4 is more expensive but materially safer.",
@@ -41,10 +41,10 @@ def test_logistics_agent_uses_llm_ranked_actions(monkeypatch) -> None:
     assert proposal.llm_used is True
     assert proposal.domain_summary
     assert proposal.recommended_action_ids == [
-        "act_reroute_SKU_003_R2",
-        "act_reroute_SKU_001_R2",
+        "act_reroute_SKU_004_R_BN_HN_ALT",
+        "act_reroute_SKU_001_R_BN_HN_ALT",
     ]
-    assert proposal.proposals[0].action_id == "act_reroute_SKU_003_R2"
+    assert proposal.proposals[0].action_id == "act_reroute_SKU_004_R_BN_HN_ALT"
     assert proposal.proposals[0].priority > proposal.proposals[1].priority
 
 
@@ -69,7 +69,7 @@ def test_invalid_specialist_action_ids_fall_back_safely(monkeypatch) -> None:
     assert proposal.llm_used is False
     assert proposal.llm_error == "llm returned no valid action ids"
     assert proposal.recommended_action_ids == []
-    assert proposal.proposals[0].action_id == "act_supplier_SKU_001_SUP_B"
+    assert proposal.proposals[0].action_id == "act_supplier_SKU_001_SUP_HP"
 
 
 def test_disabled_specialist_llm_keeps_deterministic_supplier_behavior(monkeypatch) -> None:
@@ -84,7 +84,7 @@ def test_disabled_specialist_llm_keeps_deterministic_supplier_behavior(monkeypat
     assert proposal.llm_used is False
     assert proposal.llm_error is None
     assert proposal.domain_summary == ""
-    assert proposal.proposals[0].action_id == "act_supplier_SKU_001_SUP_B"
+    assert proposal.proposals[0].action_id == "act_supplier_SKU_001_SUP_HP"
 
 
 def test_langgraph_routing_still_works_with_specialist_llm(monkeypatch) -> None:
@@ -111,7 +111,7 @@ def test_langgraph_routing_still_works_with_specialist_llm(monkeypatch) -> None:
             return {
                 "domain_summary": "Supplier substitution is warranted.",
                 "downstream_impacts": ["Primary replenishment reliability is compromised."],
-                "recommended_action_ids": ["act_supplier_SKU_001_SUP_B"],
+                "recommended_action_ids": ["act_supplier_SKU_013_SUP_HP"],
                 "tradeoffs": ["Backup suppliers improve reliability at a cost premium."],
                 "notes_for_planner": "Use the stronger alternate supplier if score impact is acceptable.",
             }
@@ -119,7 +119,7 @@ def test_langgraph_routing_still_works_with_specialist_llm(monkeypatch) -> None:
             return {
                 "domain_summary": "Route risk is elevated.",
                 "downstream_impacts": ["Staying on the disrupted lane could slow recovery."],
-                "recommended_action_ids": ["act_reroute_SKU_001_R2"],
+                "recommended_action_ids": ["act_reroute_SKU_001_R_BN_HN_ALT"],
                 "tradeoffs": ["The safer route costs more."],
                 "notes_for_planner": "Consider route protection for affected SKUs.",
             }
