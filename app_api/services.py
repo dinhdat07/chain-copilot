@@ -7,6 +7,11 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 
+from core.display_text import (
+    normalize_display_list,
+    normalize_display_payload,
+    normalize_display_text,
+)
 from core.enums import ApprovalStatus, EventType
 from core.memory import SQLiteStore
 from core.models import (
@@ -83,6 +88,7 @@ from app_api.schemas import (
     EventIngestRequest,
     EventView,
     ExecutionRecordView,
+    ExecutionSummaryView,
     InventoryRowView,
     KPIView,
     PendingApprovalView,
@@ -93,6 +99,7 @@ from app_api.schemas import (
     RunView,
     RouteDecisionView,
     ScenarioOutcomeView,
+    SelectedPlanSummaryView,
     ServiceFlagsView,
     ServiceMetricsView,
     ServiceRuntimeView,
@@ -111,7 +118,7 @@ def _error_detail(
 ) -> dict[str, Any]:
     return {
         "code": code,
-        "message": message,
+        "message": normalize_display_text(message),
         "details": details or {},
         "retryable": retryable,
         "correlation_id": correlation_id,
@@ -624,7 +631,7 @@ class ControlTowerRuntime:
             "plan_execution_status": summary.plan_execution_status.value,
             "overall_progress": summary.overall_progress,
             "records": [action_execution_record_view(r) for r in summary.records],
-            "compensation_hints": summary.compensation_hints,
+            "compensation_hints": normalize_display_list(summary.compensation_hints),
         }
 
     def update_execution_progress(
@@ -764,7 +771,51 @@ def event_envelope_view(item: EventEnvelope | dict) -> EventEnvelopeView:
 
 def run_record_view(item: RunRecord | dict) -> RunView:
     payload = item if isinstance(item, RunRecord) else RunRecord.model_validate(item)
-    return RunView(**payload.model_dump(mode="json"))
+    return RunView(
+        run_id=payload.run_id,
+        run_type=payload.run_type,
+        parent_run_id=payload.parent_run_id,
+        correlation_id=payload.correlation_id,
+        trigger_event_id=payload.trigger_event_id,
+        input_event_ids=payload.input_event_ids,
+        mode_before=payload.mode_before,
+        mode_after=payload.mode_after,
+        status=payload.status,
+        started_at=payload.started_at,
+        completed_at=payload.completed_at,
+        duration_ms=payload.duration_ms,
+        decision_id=payload.decision_id,
+        selected_plan_id=payload.selected_plan_id,
+        execution_id=payload.execution_id,
+        approval_status=payload.approval_status,
+        llm_fallback_used=payload.llm_fallback_used,
+        llm_fallback_reason=normalize_display_text(payload.llm_fallback_reason),
+        selected_plan_summary=(
+            SelectedPlanSummaryView(
+                plan_id=payload.selected_plan_summary.plan_id,
+                strategy_label=payload.selected_plan_summary.strategy_label,
+                generated_by=payload.selected_plan_summary.generated_by,
+                approval_required=payload.selected_plan_summary.approval_required,
+                approval_reason=normalize_display_text(
+                    payload.selected_plan_summary.approval_reason
+                )
+                or "",
+                score=payload.selected_plan_summary.score,
+                action_ids=payload.selected_plan_summary.action_ids,
+            )
+            if payload.selected_plan_summary is not None
+            else None
+        ),
+        execution_summary=(
+            ExecutionSummaryView(
+                status=payload.execution_summary.status,
+                dispatch_mode=payload.execution_summary.dispatch_mode,
+                action_ids=payload.execution_summary.action_ids,
+            )
+            if payload.execution_summary is not None
+            else None
+        ),
+    )
 
 
 def run_record_list_view(items: list[RunRecord | dict]) -> list[RunView]:
@@ -777,7 +828,37 @@ def execution_record_view(item: ExecutionRecord | dict) -> ExecutionRecordView:
         if isinstance(item, ExecutionRecord)
         else ExecutionRecord.model_validate(item)
     )
-    return ExecutionRecordView(**payload.model_dump(mode="json"))
+    return ExecutionRecordView(
+        execution_id=payload.execution_id,
+        run_id=payload.run_id,
+        decision_id=payload.decision_id,
+        plan_id=payload.plan_id,
+        status=payload.status,
+        dispatch_mode=payload.dispatch_mode,
+        dry_run=payload.dry_run,
+        target_system=payload.target_system,
+        action_ids=payload.action_ids,
+        receipts=[
+            {
+                "receipt_id": receipt.receipt_id,
+                "action_id": receipt.action_id,
+                "status": receipt.status,
+                "detail": normalize_display_text(receipt.detail) or "",
+            }
+            for receipt in payload.receipts
+        ],
+        status_history=[
+            {
+                "status": transition.status,
+                "timestamp": transition.timestamp,
+                "reason": normalize_display_text(transition.reason) or "",
+            }
+            for transition in payload.status_history
+        ],
+        failure_reason=normalize_display_text(payload.failure_reason),
+        created_at=payload.created_at,
+        updated_at=payload.updated_at,
+    )
 
 
 def action_execution_record_view(
@@ -788,7 +869,25 @@ def action_execution_record_view(
         if isinstance(item, ActionExecutionRecord)
         else ActionExecutionRecord.model_validate(item)
     )
-    return ActionExecutionRecordView(**payload.model_dump(mode="json"))
+    return ActionExecutionRecordView(
+        execution_id=payload.execution_id,
+        plan_id=payload.plan_id,
+        dispatch_mode=payload.dispatch_mode,
+        action_id=payload.action_id,
+        action_type=payload.action_type,
+        target_system=payload.target_system,
+        payload=payload.payload,
+        idempotency_key=payload.idempotency_key,
+        status=payload.status,
+        receipt=payload.receipt,
+        failure_reason=normalize_display_text(payload.failure_reason),
+        is_retryable=payload.is_retryable,
+        created_at=payload.created_at,
+        dispatched_at=payload.dispatched_at,
+        applied_at=payload.applied_at,
+        estimated_completion_at=payload.estimated_completion_at,
+        progress_percentage=payload.progress_percentage,
+    )
 
 
 def historical_control_tower_state(
@@ -816,7 +915,7 @@ def action_view(action: Action) -> ActionView:
         action_id=action.action_id,
         action_type=action.action_type.value,
         target_id=action.target_id,
-        reason=action.reason,
+        reason=normalize_display_text(action.reason) or "",
         priority=action.priority,
         estimated_cost_delta=action.estimated_cost_delta,
         estimated_service_delta=action.estimated_service_delta,
@@ -827,7 +926,12 @@ def action_view(action: Action) -> ActionView:
 
 
 def constraint_violation_view(item: ConstraintViolation) -> ConstraintViolationView:
-    return ConstraintViolationView(**item.model_dump(mode="json"))
+    return ConstraintViolationView(
+        code=item.code.value if hasattr(item.code, "value") else item.code,
+        message=normalize_display_text(item.message) or "",
+        action_id=item.action_id,
+        severity=item.severity,
+    )
 
 
 def projection_step_view(item) -> ProjectionStepView:
@@ -840,13 +944,21 @@ def projection_step_view(item) -> ProjectionStepView:
         inventory_out_of_stock=item.inventory_out_of_stock,
         backlog_units=item.backlog_units,
         inbound_units_due=item.inbound_units_due,
-        summary=item.summary,
-        key_changes=item.key_changes,
+        summary=normalize_display_text(item.summary) or "",
+        key_changes=normalize_display_list(item.key_changes),
     )
 
 
 def projected_state_summary_view(item) -> ProjectedStateSummaryView:
-    return ProjectedStateSummaryView(**item.model_dump(mode="json"))
+    return ProjectedStateSummaryView(
+        inventory_at_risk=item.inventory_at_risk,
+        inventory_out_of_stock=item.inventory_out_of_stock,
+        backlog_units=item.backlog_units,
+        inbound_units_scheduled=item.inbound_units_scheduled,
+        dominant_constraint=normalize_display_text(item.dominant_constraint) or "",
+        event_severity_end=item.event_severity_end,
+        summary=normalize_display_text(item.summary) or "",
+    )
 
 
 def plan_view(
@@ -863,20 +975,24 @@ def plan_view(
         score_breakdown=plan.score_breakdown,
         feasible=plan.feasible,
         violations=[constraint_violation_view(item) for item in plan.violations],
-        mode_rationale=plan.mode_rationale,
+        mode_rationale=normalize_display_text(plan.mode_rationale) or "",
         strategy_label=plan.strategy_label,
         generated_by=plan.generated_by,
         approval_required=plan.approval_required,
-        approval_reason=plan.approval_reason,
+        approval_reason=normalize_display_text(plan.approval_reason) or "",
         approval_status=decision.approval_status.value
         if decision
         else ApprovalStatus.NOT_REQUIRED.value,
-        planner_reasoning=plan.planner_reasoning,
-        llm_planner_narrative=plan.llm_planner_narrative,
-        critic_summary=plan.critic_summary,
+        planner_reasoning=normalize_display_text(plan.planner_reasoning) or "",
+        llm_planner_narrative=normalize_display_text(plan.llm_planner_narrative),
+        critic_summary=normalize_display_text(plan.critic_summary),
         trigger_event_ids=plan.trigger_event_ids,
         actions=[action_view(item) for item in plan.actions],
-        metadata=plan.metadata.model_dump(mode="json") if plan.metadata else {},
+        metadata=(
+            normalize_display_payload(plan.metadata.model_dump(mode="json"))
+            if plan.metadata
+            else {}
+        ),
     )
 
 
@@ -915,15 +1031,15 @@ def candidate_evaluation_view(item) -> CandidateEvaluationView:
             if item.projected_state_summary is not None
             else None
         ),
-        projection_summary=item.projection_summary,
+        projection_summary=normalize_display_text(item.projection_summary) or "",
         feasible=item.feasible,
         violations=[
             constraint_violation_view(violation) for violation in item.violations
         ],
-        mode_rationale=item.mode_rationale,
+        mode_rationale=normalize_display_text(item.mode_rationale) or "",
         approval_required=item.approval_required,
-        approval_reason=item.approval_reason,
-        rationale=item.rationale,
+        approval_reason=normalize_display_text(item.approval_reason) or "",
+        rationale=normalize_display_text(item.rationale) or "",
         llm_used=item.llm_used,
         coverage_fraction=item.coverage_fraction,
         critical_covered=item.critical_covered,
@@ -937,8 +1053,8 @@ def decision_summary_view(item: DecisionLog) -> DecisionLogSummaryView:
         plan_id=item.plan_id,
         approval_status=item.approval_status.value,
         approval_required=item.approval_required,
-        approval_reason=item.approval_reason,
-        selection_reason=item.selection_reason,
+        approval_reason=normalize_display_text(item.approval_reason) or "",
+        selection_reason=normalize_display_text(item.selection_reason) or "",
         selected_actions=item.selected_actions,
         event_ids=item.event_ids,
         llm_used=item.llm_used,
@@ -951,24 +1067,24 @@ def decision_detail_view(item: DecisionLog) -> DecisionLogDetailView:
         plan_id=item.plan_id,
         approval_status=item.approval_status.value,
         approval_required=item.approval_required,
-        approval_reason=item.approval_reason,
-        rationale=item.rationale,
-        selection_reason=item.selection_reason,
-        mode_rationale=item.mode_rationale,
-        winning_factors=item.winning_factors,
+        approval_reason=normalize_display_text(item.approval_reason) or "",
+        rationale=normalize_display_text(item.rationale) or "",
+        selection_reason=normalize_display_text(item.selection_reason) or "",
+        mode_rationale=normalize_display_text(item.mode_rationale) or "",
+        winning_factors=normalize_display_list(item.winning_factors),
         score_breakdown=item.score_breakdown,
         selected_actions=item.selected_actions,
-        rejected_actions=item.rejected_actions,
+        rejected_actions=normalize_display_payload(item.rejected_actions),
         candidate_evaluations=[
             candidate_evaluation_view(eval_item)
             for eval_item in item.candidate_evaluations
         ],
-        critic_summary=item.critic_summary,
-        critic_findings=item.critic_findings,
+        critic_summary=normalize_display_text(item.critic_summary),
+        critic_findings=normalize_display_list(item.critic_findings),
         llm_used=item.llm_used,
         llm_provider=item.llm_provider,
         llm_model=item.llm_model,
-        llm_error=item.llm_error,
+        llm_error=normalize_display_text(item.llm_error),
         before_kpis=kpi_view(item.before_kpis),
         after_kpis=kpi_view(item.after_kpis),
     )
@@ -1139,7 +1255,10 @@ def supplier_rows(
                 reliability=supplier.reliability,
                 is_primary=supplier.is_primary,
                 status=supplier.status,
-                tradeoff=_supplier_tradeoff(state, supplier.supplier_id, supplier.sku),
+                tradeoff=normalize_display_text(
+                    _supplier_tradeoff(state, supplier.supplier_id, supplier.sku)
+                )
+                or "",
             )
         )
     items.sort(key=lambda row: (row.sku, -row.reliability, row.lead_time_days))
@@ -1154,7 +1273,10 @@ def alerts(state: SystemState) -> list[AlertView]:
             AlertView(
                 level=level,
                 title=event.type.value.replace("_", " ").title(),
-                message=f"Detected from {event.source} with severity {event.severity:.2f}",
+                message=normalize_display_text(
+                    f"Detected from {event.source} with severity {event.severity:.2f}"
+                )
+                or "",
                 source="event",
                 event_type=event.type.value,
                 entity_ids=event.entity_ids,
@@ -1167,9 +1289,10 @@ def alerts(state: SystemState) -> list[AlertView]:
             AlertView(
                 level="critical" if row.status == "out_of_stock" else "warning",
                 title=f"{row.sku} inventory {row.status.replace('_', ' ')}",
-                message=(
+                message=normalize_display_text(
                     f"On hand {row.on_hand}, incoming {row.incoming_qty}, reorder point {row.reorder_point}"
-                ),
+                )
+                or "",
                 source="inventory",
                 entity_ids=[row.sku],
             )
@@ -1190,8 +1313,8 @@ def pending_approval_view(state: SystemState) -> PendingApprovalView | None:
     return PendingApprovalView(
         decision_id=decision.decision_id,
         approval_status=decision.approval_status.value,
-        approval_reason=decision.approval_reason,
-        selection_reason=decision.selection_reason,
+        approval_reason=normalize_display_text(decision.approval_reason) or "",
+        selection_reason=normalize_display_text(decision.selection_reason) or "",
         selected_actions=decision.selected_actions,
         allowed_actions=allowed_actions,
         before_kpis=kpi_view(decision.before_kpis),
@@ -1225,10 +1348,10 @@ def approval_detail_view(state: SystemState, decision_id: str) -> ApprovalDetail
         plan_id=decision.plan_id,
         approval_required=decision.approval_required,
         approval_status=decision.approval_status.value,
-        approval_reason=decision.approval_reason,
+        approval_reason=normalize_display_text(decision.approval_reason) or "",
         is_pending=pending,
         allowed_actions=allowed_actions if pending else [],
-        selection_reason=decision.selection_reason,
+        selection_reason=normalize_display_text(decision.selection_reason) or "",
         selected_actions=decision.selected_actions,
         event_ids=decision.event_ids,
         before_kpis=kpi_view(decision.before_kpis),
@@ -1244,7 +1367,7 @@ def approval_detail_view(state: SystemState, decision_id: str) -> ApprovalDetail
             score=0.0,
             score_breakdown=decision.score_breakdown,
             approval_required=decision.approval_required,
-            approval_reason=decision.approval_reason,
+            approval_reason=normalize_display_text(decision.approval_reason) or "",
             approval_status=decision.approval_status.value,
         ),
     )
@@ -1268,7 +1391,10 @@ def approval_command_result_view(
         decision_id=decision.decision_id,
         action=action,
         approval_status=decision.approval_status.value,
-        message=message_map.get(action, "Approval action processed."),
+        message=normalize_display_text(
+            message_map.get(action, "Approval action processed.")
+        )
+        or "",
         latest_plan=latest_plan_view(state),
         pending_approval=pending_approval_view(state),
         execution=execution_record_view(execution) if execution is not None else None,
@@ -1295,7 +1421,7 @@ def latest_trace_view(state: SystemState) -> TraceView:
             candidate_count=len(latest_decision.candidate_evaluations)
             if latest_decision
             else 0,
-            selection_reason=latest_decision.selection_reason
+            selection_reason=normalize_display_text(latest_decision.selection_reason)
             if latest_decision
             else None,
             candidate_evaluations=(
@@ -1307,8 +1433,16 @@ def latest_trace_view(state: SystemState) -> TraceView:
                 else []
             ),
             approval_pending=state.pending_plan is not None,
-            approval_reason=latest_decision.approval_reason if latest_decision else "",
-            critic_summary=latest_decision.critic_summary if latest_decision else None,
+            approval_reason=(
+                normalize_display_text(latest_decision.approval_reason) or ""
+                if latest_decision
+                else ""
+            ),
+            critic_summary=(
+                normalize_display_text(latest_decision.critic_summary)
+                if latest_decision
+                else None
+            ),
         )
 
     steps = [
@@ -1322,19 +1456,19 @@ def latest_trace_view(state: SystemState) -> TraceView:
             completed_at=step.completed_at,
             duration_ms=step.duration_ms,
             mode_snapshot=step.mode_snapshot,
-            summary=step.summary,
+            summary=normalize_display_text(step.summary) or "",
             reasoning_source=step.reasoning_source,
             input_snapshot=step.input_snapshot,
-            output_snapshot=step.output_snapshot,
-            observations=step.observations,
-            risks=step.risks,
-            downstream_impacts=step.downstream_impacts,
+            output_snapshot=normalize_display_payload(step.output_snapshot),
+            observations=normalize_display_list(step.observations),
+            risks=normalize_display_list(step.risks),
+            downstream_impacts=normalize_display_list(step.downstream_impacts),
             recommended_action_ids=step.recommended_action_ids,
-            tradeoffs=step.tradeoffs,
+            tradeoffs=normalize_display_list(step.tradeoffs),
             llm_used=step.llm_used,
-            llm_error=step.llm_error,
+            llm_error=normalize_display_text(step.llm_error),
             fallback_used=step.fallback_used,
-            fallback_reason=step.fallback_reason,
+            fallback_reason=normalize_display_text(step.fallback_reason),
         )
         for step in trace.steps
     ]
@@ -1359,7 +1493,7 @@ def latest_trace_view(state: SystemState) -> TraceView:
                 from_node=item.from_node,
                 outcome=item.outcome,
                 to_node=item.to_node,
-                reason=item.reason,
+                reason=normalize_display_text(item.reason) or "",
             )
             for item in trace.route_decisions
         ],
@@ -1371,8 +1505,10 @@ def latest_trace_view(state: SystemState) -> TraceView:
         selected_strategy=trace.selected_strategy
         or (state.latest_plan.strategy_label if state.latest_plan else None),
         candidate_count=trace.candidate_count,
-        selection_reason=trace.selection_reason
-        or (latest_decision.selection_reason if latest_decision else None),
+        selection_reason=normalize_display_text(
+            trace.selection_reason
+            or (latest_decision.selection_reason if latest_decision else None)
+        ),
         candidate_evaluations=(
             [
                 candidate_evaluation_view(item)
@@ -1382,10 +1518,12 @@ def latest_trace_view(state: SystemState) -> TraceView:
             else []
         ),
         approval_pending=trace.approval_pending,
-        approval_reason=trace.approval_reason,
+        approval_reason=normalize_display_text(trace.approval_reason) or "",
         execution_status=trace.execution_status,
-        critic_summary=trace.critic_summary
-        or (latest_decision.critic_summary if latest_decision else None),
+        critic_summary=normalize_display_text(
+            trace.critic_summary
+            or (latest_decision.critic_summary if latest_decision else None)
+        ),
     )
 
 
@@ -1403,19 +1541,19 @@ def trace_view_from_record(
             completed_at=step.completed_at,
             duration_ms=step.duration_ms,
             mode_snapshot=step.mode_snapshot,
-            summary=step.summary,
+            summary=normalize_display_text(step.summary) or "",
             reasoning_source=step.reasoning_source,
             input_snapshot=step.input_snapshot,
-            output_snapshot=step.output_snapshot,
-            observations=step.observations,
-            risks=step.risks,
-            downstream_impacts=step.downstream_impacts,
+            output_snapshot=normalize_display_payload(step.output_snapshot),
+            observations=normalize_display_list(step.observations),
+            risks=normalize_display_list(step.risks),
+            downstream_impacts=normalize_display_list(step.downstream_impacts),
             recommended_action_ids=step.recommended_action_ids,
-            tradeoffs=step.tradeoffs,
+            tradeoffs=normalize_display_list(step.tradeoffs),
             llm_used=step.llm_used,
-            llm_error=step.llm_error,
+            llm_error=normalize_display_text(step.llm_error),
             fallback_used=step.fallback_used,
-            fallback_reason=step.fallback_reason,
+            fallback_reason=normalize_display_text(step.fallback_reason),
         )
         for step in trace.steps
     ]
@@ -1436,7 +1574,7 @@ def trace_view_from_record(
                 from_node=item.from_node,
                 outcome=item.outcome,
                 to_node=item.to_node,
-                reason=item.reason,
+                reason=normalize_display_text(item.reason) or "",
             )
             for item in trace.route_decisions
         ],
@@ -1450,12 +1588,12 @@ def trace_view_from_record(
             else None
         ),
         candidate_count=trace.candidate_count,
-        selection_reason=trace.selection_reason,
+        selection_reason=normalize_display_text(trace.selection_reason),
         candidate_evaluations=[],
         approval_pending=trace.approval_pending,
-        approval_reason=trace.approval_reason,
+        approval_reason=normalize_display_text(trace.approval_reason) or "",
         execution_status=trace.execution_status,
-        critic_summary=trace.critic_summary,
+        critic_summary=normalize_display_text(trace.critic_summary),
     )
 
 
@@ -1470,12 +1608,12 @@ def reflection_views(state: SystemState) -> list[ReflectionView]:
             plan_id=item.plan_id,
             mode=item.mode,
             approval_status=item.approval_status,
-            summary=item.summary,
-            lessons=item.lessons,
+            summary=normalize_display_text(item.summary) or "",
+            lessons=normalize_display_list(item.lessons),
             pattern_tags=item.pattern_tags,
-            follow_up_checks=item.follow_up_checks,
+            follow_up_checks=normalize_display_list(item.follow_up_checks),
             llm_used=item.llm_used,
-            llm_error=item.llm_error,
+            llm_error=normalize_display_text(item.llm_error),
         )
         for item in state.memory.reflection_notes
     ]

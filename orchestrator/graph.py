@@ -12,6 +12,11 @@ from agents.logistics import LogisticsAgent
 from agents.planner import PlannerAgent
 from agents.risk import RiskAgent
 from agents.supplier import SupplierAgent
+from core.display_text import (
+    normalize_display_list,
+    normalize_display_payload,
+    normalize_display_text,
+)
 from core.enums import ApprovalStatus, Mode, PlanStatus
 from core.models import (
     AgentProposal,
@@ -81,8 +86,8 @@ class LangGraphControlTower:
                     type=type,  # type: ignore[arg-type]
                     agent=agent,
                     step=step,
-                    message=message,
-                    data=data or {},
+                    message=normalize_display_text(message) or "",
+                    data=normalize_display_payload(data or {}),
                     timestamp=utc_now(),
                 ),
             )
@@ -168,18 +173,20 @@ class LangGraphControlTower:
                 ),
                 2,
             )
-            step.summary = summary
+            step.summary = normalize_display_text(summary) or ""
             step.reasoning_source = reasoning_source
-            step.observations = observations or []
-            step.risks = risks or []
-            step.downstream_impacts = downstream_impacts or []
+            step.observations = normalize_display_list(observations or [])
+            step.risks = normalize_display_list(risks or [])
+            step.downstream_impacts = normalize_display_list(
+                downstream_impacts or []
+            )
             step.recommended_action_ids = recommended_action_ids or []
-            step.tradeoffs = tradeoffs or []
+            step.tradeoffs = normalize_display_list(tradeoffs or [])
             step.llm_used = llm_used
-            step.llm_error = llm_error
+            step.llm_error = normalize_display_text(llm_error)
             step.fallback_used = bool(llm_error)
-            step.fallback_reason = llm_error
-            step.output_snapshot = output_snapshot or {}
+            step.fallback_reason = normalize_display_text(llm_error)
+            step.output_snapshot = normalize_display_payload(output_snapshot or {})
             return
 
     def _complete_agent_step(
@@ -227,7 +234,7 @@ class LangGraphControlTower:
                 from_node=from_node,
                 outcome=outcome,
                 to_node=to_node,
-                reason=reason,
+                reason=normalize_display_text(reason) or "",
             )
         )
 
