@@ -720,7 +720,6 @@ async def _stream_daily_plan(runtime_getter: Callable, run_id: str) -> None:
     """
     from streaming.event_bus import event_bus
     from streaming.schemas import ThinkingEvent
-    from datetime import datetime
 
     loop = asyncio.get_event_loop()
     runtime = runtime_getter()
@@ -752,11 +751,9 @@ def _sync_run_with_run_id(runtime, run_id: str) -> None:
     Saves state and artifacts after completion (mirrors run_daily logic).
     """
     from orchestrator.service import (
-        PendingApprovalError,
         _save_state,
         ensure_no_pending_plan,
     )
-    from fastapi import HTTPException as _HTTPException
 
     ensure_no_pending_plan(runtime.state)
     # graph.invoke() forwards run_id into OrchestrationState
