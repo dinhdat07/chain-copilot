@@ -69,8 +69,19 @@ class RiskAgent(BaseAgent):
         scenario_scope = resolved_scope.to_dict()
         scenario_brief = self._scenario_brief(event, scenario_scope)
         if event is None:
-            proposal.domain_summary = f"Risk review completed with no incoming disruption. Current operating mode is {state.mode.value}."
+            proposal.observations.append(
+                f"Network operating in {state.mode.value} mode with no active trigger event"
+            )
+            proposal.domain_summary = (
+                f"Risk review completed with no incoming disruption. Current operating mode is {state.mode.value}."
+            )
         else:
+            proposal.observations.append(
+                f"{event.type.value.replace('_', ' ')} detected at severity {event.severity:.2f}"
+            )
+            proposal.risks.append(
+                f"Mode switched to {state.mode.value} because disruption severity requires closer monitoring"
+            )
             proposal.domain_summary = (
                 f"{event.type.value.replace('_', ' ').title()} requires risk review for "
                 f"{', '.join(event.entity_ids) if event.entity_ids else 'the network'}. "
@@ -121,10 +132,12 @@ class RiskAgent(BaseAgent):
             },
         )
 
-        # Clear other fields so only domain_summary is returned
-        proposal.observations.clear()
-        proposal.risks.clear()
-        proposal.downstream_impacts.clear()
+        if not proposal.downstream_impacts and event is not None:
+            proposal.downstream_impacts.append(
+                "Elevated disruption risk may affect downstream service level and recovery speed."
+            )
+
+        # Keep the risk agent non-prescriptive even when the LLM returns extras.
         proposal.recommended_action_ids.clear()
         proposal.tradeoffs.clear()
 
