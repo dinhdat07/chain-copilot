@@ -585,28 +585,29 @@ class ControlTowerRuntime:
 
         if plan is None:
             raise_not_found("plan", plan_id)
+        existing_commit_records = [
+            ActionExecutionRecord.model_validate(item)
+            for item in self.store.list_action_execution_records(limit=None)
+            if item.get("plan_id") == plan_id
+            and item.get("dispatch_mode") == "commit"
+        ]
 
-        if mode == "commit":
-            existing_records = [
-                ActionExecutionRecord.model_validate(item)
-                for item in self.store.list_action_execution_records(limit=None)
-                if item.get("plan_id") == plan_id
-                and item.get("dispatch_mode", "dry_run") == mode
-            ]
-            if existing_records:
-                existing_records.sort(key=lambda record: record.created_at)
-                return {
-                    "plan_id": plan_id,
-                    "dispatch_mode": mode,
-                    "plan_execution_status": compute_plan_execution_status(
-                        existing_records
-                    ).value,
-                    "overall_progress": compute_overall_progress(existing_records),
-                    "records": [
-                        action_execution_record_view(r) for r in existing_records
-                    ],
-                    "compensation_hints": [],
-                }
+        if existing_commit_records:
+            existing_commit_records.sort(key=lambda record: record.created_at)
+            reported_mode = "dry_run" if mode == "dry_run" else "commit"
+
+            return {
+                "plan_id": plan_id,
+                "dispatch_mode": reported_mode,
+                "plan_execution_status": compute_plan_execution_status(
+                    existing_commit_records
+                ).value,
+                "overall_progress": compute_overall_progress(existing_commit_records),
+                "records": [
+                    action_execution_record_view(r) for r in existing_commit_records
+                ],
+                "compensation_hints": [], # Historic records don't have active hints
+            }
 
         summary = self.dispatch_service.dispatch_plan(plan, mode=mode)
 
@@ -1574,3 +1575,7 @@ def build_event_from_envelope(envelope: EventEnvelope) -> Event:
         payload=envelope.payload,
         dedupe_key=envelope.idempotency_key,
     )
+
+
+
+

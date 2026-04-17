@@ -29,7 +29,7 @@ from policies.strategic_prompt import (
     retrieve_relevant_cases,
     compute_memory_influence,
     derive_strategy_rationale,
-    build_strategic_prompt,
+    build_memory_prompt,
 )
 from simulation.evaluator import evaluate_candidate_plan
 
@@ -886,14 +886,14 @@ class PlannerAgent(BaseAgent):
         effective_event = event or (state.active_events[-1] if state.active_events else None)
         historical_cases = retrieve_relevant_cases(effective_event, state.memory, top_k=3)
         memory_influence = compute_memory_influence(historical_cases)
-        strategic_prompt = build_strategic_prompt(
-            mode=state.mode.value, event=effective_event, 
-            historical_cases=historical_cases, candidate_actions=feasible_candidates
+        memory_prompt = build_memory_prompt(
+            mode=state.mode.value, historical_cases=historical_cases
         )
 
         before_kpis = state.kpis.model_copy(deep=True)
         llm_drafts, planner_error = generate_candidate_plan_drafts(
-            state=state, event=event, candidate_actions=feasible_candidates
+            state=state, event=event, candidate_actions=feasible_candidates,
+            memory_prompt=memory_prompt
         )
         logger.info(
             "planner candidate generation result llm_drafts=%s planner_error=%s feasible_candidates=%s suppress_no_op=%s action_limit=%s",
@@ -1065,7 +1065,7 @@ class PlannerAgent(BaseAgent):
             referenced_cases=historical_cases,
             memory_influence_score=memory_influence,
             strategy_rationale=strategy_rationale,
-            strategic_prompt=strategic_prompt
+            strategic_prompt=memory_prompt
         )
 
         winning_factors = build_winning_factors(
