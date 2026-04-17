@@ -12,7 +12,7 @@
     "event_count": 1
   },
   "compound_disruption": {
-    "description": "Supplier delay plus demand spike",
-    "event_count": 2
+    "description": "Supplier delay plus route disruption under demand pressure",
+    "event_count": 1
   }
 }

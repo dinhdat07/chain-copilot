@@ -1,13 +1,46 @@
 from __future__ import annotations
 
+from core.scenario_scope import direct_scope_summary, resolve_scenario_scope
 from core.enums import Mode
 from core.models import (
     Action,
     CandidatePlanEvaluation,
     ConstraintViolation as Violation,
+    Event,
     KPIState,
     Plan,
+    SystemState,
 )
+
+
+def _scenario_scope_text(
+    selected_actions: list[Action],
+    *,
+    state: SystemState | None = None,
+    event: Event | None = None,
+) -> str:
+    if state is not None and event is not None:
+        return direct_scope_summary(resolve_scenario_scope(state, event))
+    if not selected_actions:
+        return ""
+    targets = []
+    for action in selected_actions:
+        if action.target_id not in targets:
+            targets.append(action.target_id)
+    if not targets:
+        return ""
+    if len(targets) == 1:
+        return f"The direct scenario response is concentrated on {targets[0]}."
+    preview = ", ".join(targets[:4])
+    return f"The direct scenario response is concentrated on {len(targets)} SKU(s): {preview}."
+
+
+def _scenario_scope_targets(selected_actions: list[Action]) -> list[str]:
+    targets: list[str] = []
+    for action in selected_actions:
+        if action.target_id not in targets:
+            targets.append(action.target_id)
+    return targets
 
 
 def _pct(value: float) -> str:
@@ -45,6 +78,8 @@ def build_plan_summary(
     projection_summary: str = "",
     simulation_horizon_days: int | None = None,
     worst_case_kpis: KPIState | None = None,
+    state: SystemState | None = None,
+    event: Event | None = None,
 ) -> str:
     selected_actions = selected_actions or []
     action_text = (
@@ -68,12 +103,14 @@ def build_plan_summary(
     worst_case_text = ""
     if worst_case_kpis is not None:
         worst_case_text = (
-            f"Worst projected service reaches {_pct(worst_case_kpis.service_level)} and "
+            f"Network-wide worst projected service reaches {_pct(worst_case_kpis.service_level)} and "
             f"worst disruption risk reaches {_pct(worst_case_kpis.disruption_risk)}."
         )
     projection_text = f" {projection_summary}" if projection_summary else ""
+    scope_text = _scenario_scope_text(selected_actions, state=state, event=event)
     return (
         f"Selected {strategy_label or 'current'} strategy using {action_text}. "
+        f"{scope_text} "
         f"Projected service level moves from {_pct(before_kpis.service_level)} to {_pct(after_kpis.service_level)}, "
         f"total cost changes by {_delta_num(before_kpis.total_cost, after_kpis.total_cost)}, "
         f"disruption risk changes by {_delta_pct(before_kpis.disruption_risk, after_kpis.disruption_risk)}, "
@@ -133,12 +170,17 @@ def explain_rejected_actions(
 ) -> list[dict[str, str]]:
     infeasible_reasons = infeasible_reasons or {}
     selected_by_key = {
-        (action.action_type.value, action.target_id): action for action in selected_actions
+        (action.action_type.value, action.target_id): action
+        for action in selected_actions
     }
     selected_ids = {action.action_id for action in selected_actions}
     selected_priorities = [action.priority for action in selected_actions] or [0.0]
-    selected_service = [action.estimated_service_delta for action in selected_actions] or [0.0]
-    selected_risk = [action.estimated_risk_delta for action in selected_actions] or [0.0]
+    selected_service = [
+        action.estimated_service_delta for action in selected_actions
+    ] or [0.0]
+    selected_risk = [action.estimated_risk_delta for action in selected_actions] or [
+        0.0
+    ]
     threshold_priority = min(selected_priorities)
     avg_service = sum(selected_service) / len(selected_service)
     avg_risk = sum(selected_risk) / len(selected_risk)
@@ -148,13 +190,15 @@ def explain_rejected_actions(
         if action.action_id in selected_ids:
             continue
         if action.action_id in infeasible_reasons:
-            reason = "Hard constraint violation: " + "; ".join(v.message for v in infeasible_reasons[action.action_id])
+            reason = "Hard constraint violation: " + "; ".join(
+                v.message for v in infeasible_reasons[action.action_id]
+            )
         else:
-            duplicate = selected_by_key.get((action.action_type.value, action.target_id))
+            duplicate = selected_by_key.get(
+                (action.action_type.value, action.target_id)
+            )
             if duplicate is not None:
-                reason = (
-                    f"superseded by {duplicate.action_id}, which addressed the same target with a stronger priority profile"
-                )
+                reason = f"superseded by {duplicate.action_id}, which addressed the same target with a stronger priority profile"
             elif action.priority < threshold_priority:
                 reason = (
                     f"lower operational priority ({action.priority:.2f}) than the chosen set threshold "
@@ -179,9 +223,16 @@ def explain_rejected_actions(
 def build_critic_review(
     selected_plan: Plan,
     evaluations: list[CandidatePlanEvaluation],
+    *,
+    state: SystemState | None = None,
+    event: Event | None = None,
 ) -> tuple[str, list[str]]:
     selected = next(
-        (item for item in evaluations if item.strategy_label == selected_plan.strategy_label),
+        (
+            item
+            for item in evaluations
+            if item.strategy_label == selected_plan.strategy_label
+        ),
         evaluations[0] if evaluations else None,
     )
     runner_up = None
@@ -196,11 +247,22 @@ def build_critic_review(
                 runner_up = item
                 break
 
-    action_labels = ", ".join(_action_label(action) for action in selected_plan.actions[:3]) or "no-op coverage"
+    action_labels = (
+        ", ".join(_action_label(action) for action in selected_plan.actions[:3])
+        or "no-op coverage"
+    )
+    scope_text = _scenario_scope_text(selected_plan.actions, state=state, event=event)
+    scope_targets = (
+        resolve_scenario_scope(state, event).affected_skus
+        if state is not None and event is not None
+        else _scenario_scope_targets(selected_plan.actions)
+    )
     summary = (
         f"Reviewer assessment: the {selected_plan.strategy_label or 'selected'} plan is reasonable because it uses "
         f"{action_labels} to support the current operating objective."
     )
+    if scope_text:
+        summary += f" {scope_text}"
     if selected is not None and runner_up is not None:
         summary += (
             f" It scored ahead of {runner_up.strategy_label} by {selected.score - runner_up.score:+.4f}, "
@@ -212,6 +274,12 @@ def build_critic_review(
         summary += " Human approval is prudent because the expected impact crosses the approval guardrail."
 
     findings: list[str] = []
+    if scope_targets:
+        findings.append(
+            "Direct scenario monitoring should stay focused on "
+            + ", ".join(scope_targets[:4])
+            + "."
+        )
     longest_recovery = max(
         (action.estimated_recovery_hours for action in selected_plan.actions),
         default=0.0,
@@ -221,9 +289,17 @@ def build_critic_review(
             f"The plan depends on at least one action with a recovery window of about {longest_recovery:.0f} hours, so benefits may arrive later than the first operating cycle."
         )
     if runner_up is not None and selected is not None:
-        cost_gap = selected.projected_kpis.total_cost - runner_up.projected_kpis.total_cost
-        service_gap = selected.projected_kpis.service_level - runner_up.projected_kpis.service_level
-        risk_gap = selected.projected_kpis.disruption_risk - runner_up.projected_kpis.disruption_risk
+        cost_gap = (
+            selected.projected_kpis.total_cost - runner_up.projected_kpis.total_cost
+        )
+        service_gap = (
+            selected.projected_kpis.service_level
+            - runner_up.projected_kpis.service_level
+        )
+        risk_gap = (
+            selected.projected_kpis.disruption_risk
+            - runner_up.projected_kpis.disruption_risk
+        )
         if cost_gap > 0:
             findings.append(
                 f"Compared with {runner_up.strategy_label}, this plan carries {cost_gap:,.0f} more projected cost. Monitor whether the added spend is justified by the operating benefit."
@@ -238,7 +314,7 @@ def build_critic_review(
             )
     if selected is not None and selected.projected_state_summary is not None:
         findings.append(
-            "Projected end-state: "
+            "Network-wide projected end-state: "
             f"{selected.projected_state_summary.summary}"
         )
     if selected_plan.approval_required and not findings:

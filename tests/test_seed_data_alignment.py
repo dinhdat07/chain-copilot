@@ -1,6 +1,7 @@
 from agents.demand import DemandAgent
 from agents.inventory import InventoryAgent
 from app_api.services import inventory_rows
+from core.scenario_scope import resolve_scenario_scope
 from core.state import load_initial_state
 from orchestrator.graph import build_graph
 from simulation.scenarios import get_scenario_events
@@ -30,7 +31,7 @@ def test_seed_scenarios_target_existing_entities() -> None:
     state = load_initial_state()
     inventory_skus = set(state.inventory)
     route_ids = set(state.routes)
-    supplier_ids = {record.supplier_id for record in state.suppliers.values()}
+    supplier_catalog_ids = {record.supplier_id for record in state.suppliers.values()}
 
     for scenario_name in [
         "supplier_delay",
@@ -39,16 +40,47 @@ def test_seed_scenarios_target_existing_entities() -> None:
         "compound_disruption",
     ]:
         for event in get_scenario_events(scenario_name):
+            payload_supplier_ids = event.payload.get("supplier_ids") or []
+            route_ids_payload = event.payload.get("route_ids") or []
             supplier_id = event.payload.get("supplier_id")
             sku = event.payload.get("sku")
+            affected_skus = event.payload.get("affected_skus") or []
+            demand_changes = event.payload.get("demand_changes") or []
             route_id = event.payload.get("route_id")
 
             if supplier_id is not None:
-                assert supplier_id in supplier_ids
+                assert supplier_id in supplier_catalog_ids
+            for supplier_item in payload_supplier_ids:
+                assert supplier_item in supplier_catalog_ids
             if sku is not None:
                 assert sku in inventory_skus
+            for affected_sku in affected_skus:
+                assert affected_sku in inventory_skus
+            for change in demand_changes:
+                assert change["sku"] in inventory_skus
             if route_id is not None:
                 assert route_id in route_ids
+            for route_item in route_ids_payload:
+                assert route_item in route_ids
+
+
+def test_route_and_compound_scenarios_resolve_multi_entity_scope() -> None:
+    state = load_initial_state()
+
+    route_event = get_scenario_events("route_blockage")[0]
+    route_scope = resolve_scenario_scope(state, route_event)
+    assert route_scope.route_ids == ["R_BN_HN_MAIN"]
+    assert "SKU_001" in route_scope.route_affected_skus
+    assert route_scope.warehouse_ids == ["WH_HN"]
+    assert set(route_scope.node_ids) == {"Bac Ninh", "Hanoi"}
+
+    compound_event = get_scenario_events("compound_disruption")[0]
+    compound_scope = resolve_scenario_scope(state, compound_event)
+    assert compound_scope.route_ids == ["R_BN_HN_MAIN"]
+    assert compound_scope.supplier_ids == ["SUP_BN"]
+    assert compound_scope.demand_affected_skus == ["SKU_024"]
+    assert "SKU_001" in compound_scope.supplier_affected_skus
+    assert "SKU_001" in compound_scope.route_affected_skus
 
 
 def test_seed_inventory_baseline_has_managed_low_stock_pressure() -> None:

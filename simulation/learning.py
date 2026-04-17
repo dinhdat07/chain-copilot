@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from uuid import uuid4
 
+from core.scenario_scope import payload_route_ids, payload_supplier_ids
 from core.enums import ApprovalStatus, EventType
 from core.models import DecisionLog, MemorySnapshot, ReflectionNote, ScenarioRun, SystemState
 from core.state import default_memory, utc_now
@@ -56,16 +57,16 @@ def _update_numeric_learning(state: SystemState, run: ScenarioRun) -> tuple[dict
     supplier_updates: dict[str, float] = {}
     route_updates: dict[str, float] = {}
     for event in run.events:
-        supplier_id = event.payload.get("supplier_id")
-        route_id = event.payload.get("route_id")
-        if supplier_id and event.type in {EventType.SUPPLIER_DELAY, EventType.COMPOUND}:
-            updated_supplier = _update_supplier_learning(state, supplier_id, event.severity)
-            if updated_supplier is not None:
-                supplier_updates[supplier_id] = updated_supplier
-        if route_id and event.type in {EventType.ROUTE_BLOCKAGE, EventType.COMPOUND}:
-            updated_route = _update_route_learning(state, route_id, event.severity)
-            if updated_route is not None:
-                route_updates[route_id] = updated_route
+        if event.type in {EventType.SUPPLIER_DELAY, EventType.COMPOUND}:
+            for supplier_id in payload_supplier_ids(event):
+                updated_supplier = _update_supplier_learning(state, supplier_id, event.severity)
+                if updated_supplier is not None:
+                    supplier_updates[supplier_id] = updated_supplier
+        if event.type in {EventType.ROUTE_BLOCKAGE, EventType.COMPOUND}:
+            for route_id in payload_route_ids(event):
+                updated_route = _update_route_learning(state, route_id, event.severity)
+                if updated_route is not None:
+                    route_updates[route_id] = updated_route
     return supplier_updates, route_updates
 
 

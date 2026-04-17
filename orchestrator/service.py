@@ -217,6 +217,8 @@ def _build_safer_plan(state: SystemState, decision_log: DecisionLog) -> Plan:
             projection_summary=projection.projection_summary,
             simulation_horizon_days=projection.simulation_horizon_days,
             worst_case_kpis=projection.worst_case_kpis,
+            state=state,
+            event=_latest_event(state),
         ),
         status=PlanStatus.PROPOSED,
     )
@@ -288,6 +290,8 @@ def _build_alternative_plan(
             projection_summary=evaluation.projection_summary,
             simulation_horizon_days=evaluation.simulation_horizon_days,
             worst_case_kpis=evaluation.worst_case_kpis,
+            state=state,
+            event=_latest_event(state),
         ),
         status=PlanStatus.PROPOSED,
         feasible=evaluation.feasible,

@@ -37,8 +37,12 @@ def get_scenario_events(name: str) -> list[Event]:
                 event_id="evt_supplier_delay",
                 event_type=EventType.SUPPLIER_DELAY,
                 severity=0.80,
-                payload={"supplier_id": "SUP_BN", "sku": "SKU_001", "delay_hours": 48},
-                entity_ids=["SUP_BN", "SKU_001"],
+                payload={
+                    "supplier_id": "SUP_BN",
+                    "affected_skus": ["SKU_001", "SKU_004", "SKU_007", "SKU_010"],
+                    "delay_hours": 48,
+                },
+                entity_ids=["SUP_BN", "SKU_001", "SKU_004", "SKU_007", "SKU_010"],
             )
         ],
         "demand_spike": [
@@ -46,8 +50,14 @@ def get_scenario_events(name: str) -> list[Event]:
                 event_id="evt_demand_spike",
                 event_type=EventType.DEMAND_SPIKE,
                 severity=0.70,
-                payload={"sku": "SKU_024", "multiplier": 2.2},
-                entity_ids=["SKU_024"],
+                payload={
+                    "demand_changes": [
+                        {"sku": "SKU_024", "multiplier": 2.2},
+                        {"sku": "SKU_013", "multiplier": 1.6},
+                        {"sku": "SKU_036", "multiplier": 1.4},
+                    ]
+                },
+                entity_ids=["SKU_024", "SKU_013", "SKU_036"],
             )
         ],
         "route_blockage": [
@@ -55,7 +65,10 @@ def get_scenario_events(name: str) -> list[Event]:
                 event_id="evt_route_blockage",
                 event_type=EventType.ROUTE_BLOCKAGE,
                 severity=0.78,
-                payload={"route_id": "R_BN_HN_MAIN", "reason": "flooding"},
+                payload={
+                    "route_ids": ["R_BN_HN_MAIN"],
+                    "reason": "flooding",
+                },
                 entity_ids=["R_BN_HN_MAIN"],
             )
         ],
@@ -65,19 +78,15 @@ def get_scenario_events(name: str) -> list[Event]:
                 event_type=EventType.COMPOUND,
                 severity=0.92,
                 payload={
-                    "supplier_id": "SUP_BN",
-                    "route_id": "R_BN_HN_MAIN",
-                    "sku": "SKU_001",
+                    "supplier_ids": ["SUP_BN"],
+                    "route_ids": ["R_BN_HN_MAIN"],
+                    "demand_changes": [
+                        {"sku": "SKU_024", "multiplier": 1.9},
+                    ],
+                    "reason": "supplier delay plus lane disruption during demand pressure",
                 },
-                entity_ids=["SUP_BN", "R_BN_HN_MAIN", "SKU_001"],
-            ),
-            build_event(
-                event_id="evt_compound_spike",
-                event_type=EventType.DEMAND_SPIKE,
-                severity=0.75,
-                payload={"sku": "SKU_024", "multiplier": 1.9},
-                entity_ids=["SKU_024"],
-            ),
+                entity_ids=["SUP_BN", "R_BN_HN_MAIN", "SKU_024"],
+            )
         ],
     }
     return mapping[name]

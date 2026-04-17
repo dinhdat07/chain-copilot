@@ -26,6 +26,8 @@ class CriticAgent(BaseAgent):
             summary, findings = build_critic_review(
                 state.latest_plan,
                 decision_log.candidate_evaluations,
+                state=state,
+                event=event,
             )
         state.latest_plan.critic_summary = summary
         decision_log.critic_summary = summary

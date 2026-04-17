@@ -13,7 +13,7 @@ from core.models import (
     Event,
     Plan,
     SystemState,
-    PlanMetadata
+    PlanMetadata,
 )
 from core.logger import get_logger
 from llm.service import enrich_plan_and_decision, generate_candidate_plan_drafts
@@ -22,7 +22,12 @@ from policies.explainability import (
     build_winning_factors,
     explain_rejected_actions,
 )
-from policies.constraints import evaluate_plan_constraints, mode_rationale, evaluate_hard_constraints, evaluate_soft_constraints
+from policies.constraints import (
+    evaluate_plan_constraints,
+    mode_rationale,
+    evaluate_hard_constraints,
+    evaluate_soft_constraints,
+)
 from policies.guardrails import approval_required
 from policies.scoring import compute_score
 from policies.strategic_prompt import (
@@ -53,7 +58,9 @@ def _dedupe_actions(actions: list[Action], limit: int) -> list[Action]:
     return selected
 
 
-def _fallback_sort_key(strategy_label: str, action: Action) -> tuple[float, float, float, float]:
+def _fallback_sort_key(
+    strategy_label: str, action: Action
+) -> tuple[float, float, float, float]:
     if strategy_label == "cost_first":
         return (
             action.estimated_cost_delta,
@@ -138,10 +145,15 @@ def _should_suppress_no_op(state: SystemState) -> bool:
     )
 
 
-def _fallback_drafts(candidate_actions: list[Action], action_limit: int) -> list[CandidatePlanDraft]:
+def _fallback_drafts(
+    candidate_actions: list[Action], action_limit: int
+) -> list[CandidatePlanDraft]:
     drafts: list[CandidatePlanDraft] = []
     for strategy_label in STRATEGY_ORDER:
-        sorted_actions = sorted(candidate_actions, key=lambda action: _fallback_sort_key(strategy_label, action))
+        sorted_actions = sorted(
+            candidate_actions,
+            key=lambda action: _fallback_sort_key(strategy_label, action),
+        )
         selected = _dedupe_actions(sorted_actions, action_limit)
         drafts.append(
             CandidatePlanDraft(
@@ -163,8 +175,15 @@ def _normalize_drafts(
     by_id = {action.action_id: action for action in candidate_actions}
     normalized: list[CandidatePlanDraft] = []
     repaired_count = 0
-    fallback_map = {draft.strategy_label: draft for draft in _fallback_drafts(candidate_actions, action_limit)}
-    draft_map = {draft.strategy_label: draft for draft in drafts if draft.strategy_label in STRATEGY_ORDER}
+    fallback_map = {
+        draft.strategy_label: draft
+        for draft in _fallback_drafts(candidate_actions, action_limit)
+    }
+    draft_map = {
+        draft.strategy_label: draft
+        for draft in drafts
+        if draft.strategy_label in STRATEGY_ORDER
+    }
 
     for strategy_label in STRATEGY_ORDER:
         draft = draft_map.get(strategy_label)
@@ -172,7 +191,9 @@ def _normalize_drafts(
             normalized.append(fallback_map[strategy_label])
             repaired_count += 1
             continue
-        action_ids = [action_id for action_id in draft.action_ids if action_id in allowed_ids]
+        action_ids = [
+            action_id for action_id in draft.action_ids if action_id in allowed_ids
+        ]
         selected_actions = _dedupe_actions(
             [by_id[action_id] for action_id in action_ids if action_id in by_id],
             action_limit,
@@ -303,16 +324,17 @@ def _decision_priority_score(
 ) -> float:
     coverage = _coverage_metrics(evaluation, gap_by_sku=gap_by_sku, by_id=by_id)
     pressure = _inventory_pressure_summary(state)
-    stressed_normal = (
-        mode == "normal"
-        and (
-            state.kpis.stockout_risk >= 0.05
-            or pressure["critical_skus"] >= 8
-            or pressure["below_safety_stock"] >= 2
-        )
+    stressed_normal = mode == "normal" and (
+        state.kpis.stockout_risk >= 0.05
+        or pressure["critical_skus"] >= 8
+        or pressure["below_safety_stock"] >= 2
     )
-    coverage_weight = 0.016 if mode == "crisis" else (0.075 if stressed_normal else 0.012)
-    unresolved_penalty = 0.0012 if mode == "crisis" else (0.0025 if stressed_normal else 0.0008)
+    coverage_weight = (
+        0.016 if mode == "crisis" else (0.075 if stressed_normal else 0.012)
+    )
+    unresolved_penalty = (
+        0.0012 if mode == "crisis" else (0.0025 if stressed_normal else 0.0008)
+    )
     return round(
         evaluation.score
         + (coverage["coverage_fraction"] * coverage_weight)
@@ -409,7 +431,9 @@ def _evaluate_candidate(
         violations=[],
         mode_rationale=selected_mode_rationale,
         approval_required=needs_approval,
-        approval_reason=reason if needs_approval else "no approval required: thresholds not triggered",
+        approval_reason=reason
+        if needs_approval
+        else "no approval required: thresholds not triggered",
         rationale=rationale,
         llm_used=llm_used,
     )
@@ -529,7 +553,9 @@ def _expand_selected_for_coverage(
     )
     max_unresolved = max(int(len(gap_by_sku) * (1.0 - target_coverage)), 0)
 
-    selected_action_ids = [action_id for action_id in selected.action_ids if action_id in by_id]
+    selected_action_ids = [
+        action_id for action_id in selected.action_ids if action_id in by_id
+    ]
     selected_actions = [by_id[action_id] for action_id in selected_action_ids]
     selected_targeted = {
         action.target_id
@@ -539,7 +565,9 @@ def _expand_selected_for_coverage(
     total_gap = sum(gap_by_sku.values()) or 1.0
     selected_covered_gap = sum(gap_by_sku.get(sku, 0.0) for sku in selected_targeted)
     selected_coverage = selected_covered_gap / total_gap
-    selected_unresolved = max(len(gap_by_sku) - len(selected_targeted & set(gap_by_sku)), 0)
+    selected_unresolved = max(
+        len(gap_by_sku) - len(selected_targeted & set(gap_by_sku)), 0
+    )
     if selected_coverage >= target_coverage and selected_unresolved <= max_unresolved:
         return selected
 
@@ -596,18 +624,20 @@ def _expand_selected_for_coverage(
         gap_by_sku=gap_by_sku,
         by_id=by_id,
     )
-    expanded_evaluation.coverage_fraction = round(expanded_coverage["coverage_fraction"], 4)
+    expanded_evaluation.coverage_fraction = round(
+        expanded_coverage["coverage_fraction"], 4
+    )
     expanded_evaluation.critical_covered = int(expanded_coverage["critical_covered"])
-    expanded_evaluation.unresolved_critical = int(expanded_coverage["unresolved_critical"])
+    expanded_evaluation.unresolved_critical = int(
+        expanded_coverage["unresolved_critical"]
+    )
 
     if (
         expanded_evaluation.unresolved_critical < selected.unresolved_critical
         or expanded_evaluation.coverage_fraction > selected.coverage_fraction
     ):
         expanded_evaluation.approval_required = True
-        expanded_evaluation.approval_reason = (
-            "coverage guardrail expanded the selected strategy to reduce unresolved critical SKUs"
-        )
+        expanded_evaluation.approval_reason = "coverage guardrail expanded the selected strategy to reduce unresolved critical SKUs"
         return expanded_evaluation
     return selected
 
@@ -621,7 +651,9 @@ def _optimize_draft_scope(
     before_kpis,
     gap_by_sku: dict[str, float],
 ) -> CandidatePlanEvaluation:
-    ordered_actions = [by_id[action_id] for action_id in draft.action_ids if action_id in by_id]
+    ordered_actions = [
+        by_id[action_id] for action_id in draft.action_ids if action_id in by_id
+    ]
     min_actions, max_actions = _adaptive_scope_bounds(
         state=state,
         event=event,
@@ -670,17 +702,14 @@ def _optimize_draft_scope(
             by_id=by_id,
         )
         candidates.append((evaluation, adjusted_score, coverage["coverage_fraction"]))
-        if (
-            adjusted_score > best_adjusted
-            or (
-                adjusted_score == best_adjusted
-                and (
-                    priority_score > best_priority
-                    or (
-                        priority_score == best_priority
-                        and best_evaluation is not None
-                        and len(evaluation.action_ids) < len(best_evaluation.action_ids)
-                    )
+        if adjusted_score > best_adjusted or (
+            adjusted_score == best_adjusted
+            and (
+                priority_score > best_priority
+                or (
+                    priority_score == best_priority
+                    and best_evaluation is not None
+                    and len(evaluation.action_ids) < len(best_evaluation.action_ids)
                 )
             )
         ):
@@ -803,7 +832,9 @@ def _selection_reason(
             f" It also covered more at-risk SKUs ({int(selected_coverage['critical_covered'])} vs "
             f"{int(runner_up_coverage['critical_covered'])})."
         )
-    elif selected_coverage["coverage_fraction"] > runner_up_coverage["coverage_fraction"]:
+    elif (
+        selected_coverage["coverage_fraction"] > runner_up_coverage["coverage_fraction"]
+    ):
         coverage_note = " It addressed a larger share of current inventory exposure."
     return (
         f"{base}. It ranked ahead of {runner_up.strategy_label} ({runner_up_priority_score:.4f}) after comparing "
@@ -856,7 +887,7 @@ class PlannerAgent(BaseAgent):
 
     def run(self, state: SystemState, event: Event | None = None) -> AgentProposal:
         proposal = AgentProposal(agent=self.name)
-        
+
         candidate_actions = _ensure_actions(state.candidate_actions)
         if event is not None:
             candidate_actions = _drop_no_op_when_actions_exist(candidate_actions)
@@ -867,28 +898,43 @@ class PlannerAgent(BaseAgent):
         feasible_candidates = []
         infeasible_reasons = {}
         for act in candidate_actions:
-            dummy_plan = Plan(plan_id="tmp", mode=state.mode, score=0, score_breakdown={}, actions=[act])
+            dummy_plan = Plan(
+                plan_id="tmp",
+                mode=state.mode,
+                score=0,
+                score_breakdown={},
+                actions=[act],
+            )
             is_feas, vios = evaluate_hard_constraints(dummy_plan, state)
             if is_feas:
                 feasible_candidates.append(act)
             else:
                 infeasible_reasons[act.action_id] = vios
-                
+
         if not feasible_candidates and candidate_actions:
             feasible_candidates = [
                 Action(
-                    action_id="act_no_op_fallback", action_type=ActionType.NO_OP, target_id="system", 
-                    reason="all candidate actions violated hard constraints", priority=0.0
+                    action_id="act_no_op_fallback",
+                    action_type=ActionType.NO_OP,
+                    target_id="system",
+                    reason="all candidate actions violated hard constraints",
+                    priority=0.0,
                 )
             ]
         action_limit = _action_limit_for_mode(state, len(feasible_candidates))
 
-        effective_event = event or (state.active_events[-1] if state.active_events else None)
-        historical_cases = retrieve_relevant_cases(effective_event, state.memory, top_k=3)
+        effective_event = event or (
+            state.active_events[-1] if state.active_events else None
+        )
+        historical_cases = retrieve_relevant_cases(
+            effective_event, state.memory, top_k=3
+        )
         memory_influence = compute_memory_influence(historical_cases)
         strategic_prompt = build_strategic_prompt(
-            mode=state.mode.value, event=effective_event, 
-            historical_cases=historical_cases, candidate_actions=feasible_candidates
+            mode=state.mode.value,
+            event=effective_event,
+            historical_cases=historical_cases,
+            candidate_actions=feasible_candidates,
         )
 
         before_kpis = state.kpis.model_copy(deep=True)
@@ -903,7 +949,7 @@ class PlannerAgent(BaseAgent):
             suppress_no_op,
             action_limit,
         )
-        
+
         if planner_error == "llm_disabled":
             drafts = _fallback_drafts(feasible_candidates, action_limit)
             repaired_count = 0
@@ -913,7 +959,9 @@ class PlannerAgent(BaseAgent):
                 action_limit,
             )
         else:
-            drafts, repaired_count = _normalize_drafts(llm_drafts, feasible_candidates, action_limit)
+            drafts, repaired_count = _normalize_drafts(
+                llm_drafts, feasible_candidates, action_limit
+            )
             drafts, duplicate_repair_count = _enforce_distinct_drafts(
                 drafts,
                 feasible_candidates,
@@ -922,7 +970,9 @@ class PlannerAgent(BaseAgent):
             repaired_count += duplicate_repair_count
             fallback_used = repaired_count > 0
             if fallback_used and not planner_error:
-                planner_error = "planner returned duplicate, incomplete, or invalid candidate plans"
+                planner_error = (
+                    "planner returned duplicate, incomplete, or invalid candidate plans"
+                )
             if fallback_used:
                 logger.warning(
                     "planner fallback activated repaired_count=%s total_strategies=%s reason=%s",
@@ -959,21 +1009,38 @@ class PlannerAgent(BaseAgent):
             evaluation.unresolved_critical = int(coverage["unresolved_critical"])
 
         if not any(item.feasible for item in evaluations):
-            safe_action = next((action for action in feasible_candidates if action.action_type == ActionType.NO_OP), Action(action_id="act_no_op_fallback", action_type=ActionType.NO_OP, target_id="system", reason="all candidate actions violated hard constraints", priority=0.0))
+            safe_action = next(
+                (
+                    action
+                    for action in feasible_candidates
+                    if action.action_type == ActionType.NO_OP
+                ),
+                Action(
+                    action_id="act_no_op_fallback",
+                    action_type=ActionType.NO_OP,
+                    target_id="system",
+                    reason="all candidate actions violated hard constraints",
+                    priority=0.0,
+                ),
+            )
             evaluations.append(
                 _safe_hold_evaluation(
-                    state=state, event=event, before_kpis=before_kpis,
-                    safe_action=safe_action, infeasible_count=len(evaluations),
+                    state=state,
+                    event=event,
+                    before_kpis=before_kpis,
+                    safe_action=safe_action,
+                    infeasible_count=len(evaluations),
                 )
             )
-
 
         selected_evaluation = _select_best_evaluation(
             evaluations,
             state=state,
             by_id=by_id,
         )
-        guardrail_event = event or (state.active_events[-1] if state.active_events else None)
+        guardrail_event = event or (
+            state.active_events[-1] if state.active_events else None
+        )
         selected_evaluation = _expand_selected_for_coverage(
             selected=selected_evaluation,
             state=state,
@@ -982,7 +1049,11 @@ class PlannerAgent(BaseAgent):
             by_id=by_id,
             gap_by_sku=gap_by_sku,
         )
-        selected_actions = [by_id[action_id] for action_id in selected_evaluation.action_ids if action_id in by_id]
+        selected_actions = [
+            by_id[action_id]
+            for action_id in selected_evaluation.action_ids
+            if action_id in by_id
+        ]
         requires_manual_review, manual_review_reason = _coverage_approval_guardrail(
             selected=selected_evaluation,
             state=state,
@@ -998,7 +1069,7 @@ class PlannerAgent(BaseAgent):
                 selected_evaluation.approval_reason = (
                     f"{prior_reason}; {manual_review_reason}"
                 )
-        
+
         ordered_evaluations = sorted(
             [item for item in evaluations if item.feasible] or evaluations,
             key=lambda item: (
@@ -1010,7 +1081,11 @@ class PlannerAgent(BaseAgent):
             reverse=True,
         )
         runner_up = next(
-            (item for item in ordered_evaluations if item.strategy_label != selected_evaluation.strategy_label),
+            (
+                item
+                for item in ordered_evaluations
+                if item.strategy_label != selected_evaluation.strategy_label
+            ),
             None,
         )
         summary = build_plan_summary(
@@ -1025,6 +1100,8 @@ class PlannerAgent(BaseAgent):
             projection_summary=selected_evaluation.projection_summary,
             simulation_horizon_days=selected_evaluation.simulation_horizon_days,
             worst_case_kpis=selected_evaluation.worst_case_kpis,
+            state=state,
+            event=event,
         )
 
         final_plan = Plan(
@@ -1044,11 +1121,17 @@ class PlannerAgent(BaseAgent):
                 else (
                     "llm_planner"
                     if repaired_count == 0
-                    else ("llm_planner_repaired" if repaired_count < len(STRATEGY_ORDER) else "hybrid_fallback")
+                    else (
+                        "llm_planner_repaired"
+                        if repaired_count < len(STRATEGY_ORDER)
+                        else "hybrid_fallback"
+                    )
                 )
             ),
             approval_required=selected_evaluation.approval_required,
-            approval_reason=selected_evaluation.approval_reason if selected_evaluation.approval_required else "",
+            approval_reason=selected_evaluation.approval_reason
+            if selected_evaluation.approval_required
+            else "",
             planner_reasoning=summary,
             status=PlanStatus.PROPOSED,
         )
@@ -1059,13 +1142,14 @@ class PlannerAgent(BaseAgent):
         final_plan.feasible = is_hard_feas
         final_plan.violations = hard_violations + soft_violations
 
-
-        strategy_rationale = derive_strategy_rationale(effective_event, historical_cases, selected_actions)
+        strategy_rationale = derive_strategy_rationale(
+            effective_event, historical_cases, selected_actions
+        )
         final_plan.metadata = PlanMetadata(
             referenced_cases=historical_cases,
             memory_influence_score=memory_influence,
             strategy_rationale=strategy_rationale,
-            strategic_prompt=strategic_prompt
+            strategic_prompt=strategic_prompt,
         )
 
         winning_factors = build_winning_factors(
@@ -1074,7 +1158,9 @@ class PlannerAgent(BaseAgent):
             selected_evaluation.projected_kpis,
             selected_evaluation.score_breakdown,
         )
-        rejection_reasons = explain_rejected_actions(candidate_actions, selected_actions, action_limit)
+        rejection_reasons = explain_rejected_actions(
+            candidate_actions, selected_actions, action_limit
+        )
 
         decision_log = DecisionLog(
             decision_id=f"dec_{uuid4().hex[:8]}",
@@ -1097,27 +1183,40 @@ class PlannerAgent(BaseAgent):
             winning_factors=winning_factors,
             approval_required=selected_evaluation.approval_required,
             approval_reason=selected_evaluation.approval_reason,
-            approval_status=ApprovalStatus.PENDING if selected_evaluation.approval_required else ApprovalStatus.AUTO_APPLIED,
+            approval_status=ApprovalStatus.PENDING
+            if selected_evaluation.approval_required
+            else ApprovalStatus.AUTO_APPLIED,
             planner_error=planner_error if fallback_used else None,
-            metadata=final_plan.metadata, 
+            metadata=final_plan.metadata,
         )
-        
-        enrich_plan_and_decision(state=state, event=event, plan=final_plan, decision_log=decision_log)
+
+        enrich_plan_and_decision(
+            state=state, event=event, plan=final_plan, decision_log=decision_log
+        )
 
         state.latest_plan = final_plan
         state.latest_plan_id = final_plan.plan_id
         state.pending_plan = final_plan if final_plan.approval_required else None
         state.decision_logs.append(decision_log)
-        
+
         proposal.observations.append(
             f"built {final_plan.plan_id} using {final_plan.strategy_label} with score {final_plan.score:.4f}"
         )
+        planner_trace_summary = decision_log.selection_reason
+        if selected_evaluation.projection_summary:
+            planner_trace_summary = (
+                f"{planner_trace_summary} {selected_evaluation.projection_summary}"
+                if planner_trace_summary
+                else selected_evaluation.projection_summary
+            )
         if fallback_used and planner_error:
             proposal.risks.append(
                 f"planner {'repair' if repaired_count < len(STRATEGY_ORDER) else 'fallback'} used: {planner_error}"
             )
-        proposal.domain_summary = final_plan.llm_planner_narrative or final_plan.planner_reasoning
-        proposal.notes_for_planner = decision_log.selection_reason
+        proposal.domain_summary = (
+            final_plan.llm_planner_narrative or final_plan.planner_reasoning
+        )
+        proposal.notes_for_planner = planner_trace_summary
         proposal.downstream_impacts = winning_factors[:3]
         if runner_up is not None:
             proposal.tradeoffs.append(
@@ -1128,7 +1227,11 @@ class PlannerAgent(BaseAgent):
                 "Planner suppressed the no-action option because current inventory stress already exceeds the normal operating tolerance."
             )
         proposal.llm_used = any(evaluation.llm_used for evaluation in evaluations)
-        proposal.llm_error = planner_error if (fallback_used and planner_error != "llm_disabled") else None
+        proposal.llm_error = (
+            planner_error
+            if (fallback_used and planner_error != "llm_disabled")
+            else None
+        )
         logger.info(
             "planner final selection strategy=%s generated_by=%s llm_used=%s llm_error=%s",
             final_plan.strategy_label,
@@ -1136,5 +1239,5 @@ class PlannerAgent(BaseAgent):
             proposal.llm_used,
             proposal.llm_error or "none",
         )
-        
+
         return proposal

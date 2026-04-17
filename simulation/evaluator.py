@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from core.scenario_scope import direct_scope_summary, resolve_scenario_scope
 from core.enums import EventType
 from core.models import (
     Action,
@@ -27,6 +28,12 @@ from simulation.domain_rules import (
 )
 
 
+def _event_scope_label(state: SystemState, event: Event | None) -> str:
+    if event is None:
+        return ""
+    return direct_scope_summary(resolve_scenario_scope(state, event))
+
+
 @dataclass
 class CandidateProjection:
     projected_state: SystemState
@@ -47,6 +54,7 @@ def evaluate_candidate_plan(
 ) -> CandidateProjection:
     projected_state = clone_state(state)
     projected_event = event.model_copy(deep=True) if event is not None else None
+    baseline_scope_summary = _event_scope_label(state, event)
     if projected_event is not None and projected_state.active_events:
         projected_state.active_events[-1] = projected_event
     context = initialize_context(projected_state, projected_event)
@@ -66,11 +74,17 @@ def evaluate_candidate_plan(
 
     for step_index in range(1, max(horizon_days, 1) + 1):
         advance_demand(context, step_index=step_index, event=projected_event)
-        supplier_notes = advance_supplier(context, step_index=step_index, event=projected_event)
-        route_notes = advance_logistics(context, step_index=step_index, event=projected_event)
+        supplier_notes = advance_supplier(
+            context, step_index=step_index, event=projected_event
+        )
+        route_notes = advance_logistics(
+            context, step_index=step_index, event=projected_event
+        )
         step_metrics = advance_inventory(context, step_index=step_index)
         final_metrics = step_metrics
-        severity = advance_risk(context, event=projected_event, step_metrics=step_metrics)
+        severity = advance_risk(
+            context, event=projected_event, step_metrics=step_metrics
+        )
         step_kpis = projected_state.kpis.model_copy(deep=True)
         service_values.append(step_kpis.service_level)
         cost_values.append(step_kpis.total_cost)
@@ -78,10 +92,16 @@ def evaluate_candidate_plan(
         stockout_values.append(step_kpis.stockout_risk)
 
         key_changes = supplier_notes[:2] + route_notes[:2]
+        if step_index == 1 and baseline_scope_summary:
+            key_changes.insert(0, baseline_scope_summary)
         if step_metrics["inbound_units_due"] > 0:
-            key_changes.append(f"{step_metrics['inbound_units_due']} units landed into the network")
+            key_changes.append(
+                f"{step_metrics['inbound_units_due']} units landed into the network"
+            )
         if step_metrics["backlog_units"] > 0:
-            key_changes.append(f"backlog stands at {step_metrics['backlog_units']} units")
+            key_changes.append(
+                f"backlog stands at {step_metrics['backlog_units']} units"
+            )
 
         projection_steps.append(
             ProjectionStep(
@@ -118,6 +138,7 @@ def evaluate_candidate_plan(
         projected_event=projected_event,
     )
     projection_summary = _projection_summary(
+        state=state,
         projected_steps=projection_steps,
         projected_kpis=projected_kpis,
         worst_case_kpis=worst_case_kpis,
@@ -168,6 +189,7 @@ def _projected_state_summary(
 
 def _projection_summary(
     *,
+    state: SystemState,
     projected_steps: list[ProjectionStep],
     projected_kpis: KPIState,
     worst_case_kpis: KPIState,
@@ -188,14 +210,20 @@ def _projection_summary(
     if event is not None:
         if event.type == EventType.DEMAND_SPIKE:
             event_text = " Demand pressure is expected to normalize gradually."
-        elif event.type in {EventType.SUPPLIER_DELAY, EventType.ROUTE_BLOCKAGE, EventType.COMPOUND}:
+        elif event.type in {
+            EventType.SUPPLIER_DELAY,
+            EventType.ROUTE_BLOCKAGE,
+            EventType.COMPOUND,
+        }:
             event_text = " Mitigation quality determines whether disruption severity decays fast enough."
+    scope_text = ""
+    if event is not None:
+        scope_text = _event_scope_label(state, event)
     return (
-        f"Over the next {len(projected_steps)} day(s), service bottoms at "
+        f"{scope_text} Over the next {len(projected_steps)} day(s), projected network-wide service bottoms at "
         f"{worst_case_kpis.service_level:.0%} on {worst_service_step.label} while disruption risk peaks at "
         f"{worst_case_kpis.disruption_risk:.0%} on {highest_risk_step.label}. "
         f"By {projected_steps[-1].label}, the plan projects service at {projected_kpis.service_level:.0%}, "
         f"risk at {projected_kpis.disruption_risk:.0%}, and recovery speed at {projected_kpis.recovery_speed:.0%}. "
         f"{summary.summary}{event_text}"
     )
-
