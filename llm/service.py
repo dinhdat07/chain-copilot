@@ -377,6 +377,7 @@ def _build_planner_candidates_prompt(
     state: SystemState,
     event: Event | None,
     candidate_actions: list[Action],
+    memory_prompt: str | None = None,
 ) -> str:
     context = {
         "mode": state.mode.value,
@@ -421,7 +422,19 @@ def _build_planner_candidates_prompt(
         '{"strategy_label":"resilience_first","action_ids":["act_z"],"rationale":"..."}]}'
     )
     instruction_text = "\n\n".join(instructions)
-    return f"{instruction_text}\n\nContext:\n{json.dumps(context, ensure_ascii=True, indent=2)}"
+
+    prompt_parts = []
+    # 1. Base instructions
+    prompt_parts.append(instruction_text)
+
+    # 2. Memory Context (Historical Analogies, Directives)
+    if memory_prompt:
+        prompt_parts.append("## STRATEGIC MEMORY & DIRECTIVES\n" + memory_prompt)
+
+    # 3. Operational Data (JSON)
+    prompt_parts.append("## CURRENT OPERATIONAL DATA\n" + json.dumps(context, ensure_ascii=True, indent=2))
+
+    return "\n\n".join(prompt_parts)
 
 
 def _build_critic_prompt(
@@ -576,11 +589,13 @@ def generate_candidate_plan_drafts(
     state: SystemState,
     event: Event | None,
     candidate_actions: list[Action],
+    memory_prompt: str | None = None,
 ) -> tuple[list[CandidatePlanDraft], str | None]:
     prompt = _build_planner_candidates_prompt(
         state=state,
         event=event,
         candidate_actions=candidate_actions,
+        memory_prompt=memory_prompt
     )
     response, _, error = _call_json_model(
         prompt=prompt,

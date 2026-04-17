@@ -110,71 +110,33 @@ def _format_proposals_block(actions: list[Action]) -> str:
     return "\n\n".join(lines)
 
 
-def build_strategic_prompt(
+def build_memory_prompt(
     mode: str,
-    event: Event | None,
     historical_cases: list[HistoricalCase],
-    candidate_actions: list[Action],
 ) -> str:
     """
-    Build the full Strategic Planner Agent reasoning prompt.
+    Build the Strategic Planner Agent reasoning context focusing on directives and memory.
     """
-    event_block = _format_event_block(event)
     history_block = _format_historical_block(historical_cases)
-    proposals_block = _format_proposals_block(candidate_actions)
 
     mode_instruction = (
-        "Prioritize SERVICE LEVEL and RECOVERY SPEED above all else."
+        "Prioritize SERVICE LEVEL and RECOVERY SPEED above all else. Aggressively mitigate risks."
         if mode == "crisis"
-        else "Prioritize COST EFFICIENCY and LEAN INVENTORY."
+        else "Prioritize COST EFFICIENCY and LEAN INVENTORY while maintaining baseline service."
     )
 
     return f"""
-=======================================================================
-STRATEGIC SUPPLY CHAIN PLANNER — REASONING CONTEXT
-=======================================================================
+### STRATEGIC DIRECTIVES
+- **Current Operating Mode**: {mode.upper()}
+- **Core Objective**: {mode_instruction}
 
-OPERATING MODE: {mode.upper()}
-DIRECTIVE     : {mode_instruction}
-
------------------------------------------------------------------------
-[BLOCK 1] CURRENT DISRUPTION
------------------------------------------------------------------------
-{event_block}
-
------------------------------------------------------------------------
-[BLOCK 2] HISTORICAL MEMORY (Retrieved by Similarity)
------------------------------------------------------------------------
+### HISTORICAL MEMORY (Lessons Learned)
 {history_block}
 
------------------------------------------------------------------------
-[BLOCK 3] SPECIALIST AGENT PROPOSALS
------------------------------------------------------------------------
-{proposals_block}
-
------------------------------------------------------------------------
-[BLOCK 4] HARD CONSTRAINTS (MUST BE SATISFIED)
------------------------------------------------------------------------
-  - Only use suppliers/routes that EXIST and are NOT blocked.
-  - Reorder quantities must NOT exceed warehouse capacity.
-  - Respect Minimum Order Quantity (MOQ) where specified.
-
------------------------------------------------------------------------
-TASK INSTRUCTIONS
------------------------------------------------------------------------
-1. ANALYZE PATTERNS  : Compare current disruption with historical cases.
-   Identify which past strategies succeeded and which failed.
-
-2. EVALUATE PROPOSALS: Filter proposals. Cross-reference with lessons learned.
-
-3. CONSTRUCT PLAN    : Select actions that minimize disruption_risk and
-   maintain service_level within constraints.
-
-4. JUSTIFY          : Explicitly cite Case IDs from memory that influenced
-   your decision. Example: "Chose REORDER because in Case_001, a similar
-   action prevented a stockout."
-
-=======================================================================
+### REASONING GUIDELINES
+1. ANALYZE PATTERNS: Compare current operational data with historical cases above.
+2. LEVERAGE SUCCESS: Prioritize actions that led to positive outcome KPIs in similar past scenarios.
+3. JUSTIFY DECISIONS: Explicitly cite Case IDs that influenced your choices. For example: "Selected REORDER because in Case_001, a similar action prevented a stockout."
 """.strip()
 
 
