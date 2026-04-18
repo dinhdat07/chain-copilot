@@ -2,9 +2,9 @@
 
 # ChainCopilot — Agent Backend
 
-**An autonomous supply chain intelligence engine powered by LangGraph and Google Gemini.**
+**An MVP prototype exploring multi-agent supply chain intelligence with LangGraph and Google Gemini.**
 
-ChainCopilot orchestrates a multi-agent system that continuously monitors supply chain networks, detects disruptions, generates resilient recovery plans, and routes decisions through a human-in-the-loop approval gate — all driven by a stateful LangGraph execution graph.
+ChainCopilot orchestrates a graph of specialized AI agents that detect disruptions, generate ranked recovery plans, and route decisions through a configurable human-in-the-loop approval gate. The project is a proof-of-concept built to explore autonomous planning, explainability, and learning loops in a supply chain context — not a production system.
 
 ---
 
@@ -29,9 +29,15 @@ ChainCopilot orchestrates a multi-agent system that continuously monitors supply
 
 ## Overview
 
-ChainCopilot is a production-grade **agentic supply chain control tower**. When a disruption event is detected — a supplier delay, a route blockage, a demand spike, or a compound of all three — the system autonomously activates a graph of specialized AI agents that collaborate to produce a ranked, simulation-validated action plan. Every decision is explainable, auditable, and gated behind a configurable approval policy before being dispatched to downstream ERP / WMS / TMS systems.
+> **This is an MVP / research prototype.** It is not production-ready. Data is seeded from static CSV files, the database is a local SQLite file, execution actions are stubbed out, and there is no authentication. The goal is to demonstrate the architecture and reasoning capabilities of a multi-agent planning system.
 
-The backend exposes a **FastAPI** REST + WebSocket API consumed by the React frontend. Agents stream their reasoning in real time over WebSocket, enabling operators to watch the "thinking" process as it unfolds.
+When a disruption event is detected — a supplier delay, a route blockage, a demand spike, or a compound of all three — the system activates a graph of specialized AI agents that collaborate to produce a ranked, simulation-validated action plan. Every decision is explainable and gated behind a configurable approval policy.
+
+The backend exposes a **FastAPI** REST + WebSocket API consumed by the React frontend (see [Related](#related)). Agents stream their reasoning in real time over WebSocket so you can watch the "thinking" process as it unfolds.
+
+## Related
+
+- **Frontend (Control Tower UI):** [github.com/dinhdat07/chain-copilot — supply-chain-management/scm-demo](https://github.com/dinhdat07/supply-chain-management) — React + TypeScript dashboard for this backend.
 
 ---
 
