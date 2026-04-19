@@ -7,6 +7,7 @@ from fastapi import (
     APIRouter,
     BackgroundTasks,
     HTTPException,
+    Response,
     WebSocket,
     WebSocketDisconnect,
 )
@@ -63,6 +64,7 @@ from app_api.services import (
     plan_view,
     raise_not_found,
     reflection_views,
+    export_trace_markdown,
     run_record_view,
     run_record_list_view,
     scenario_outcomes,
@@ -255,7 +257,7 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
                 "vendors": [
                     {
                         "vendor_id": "SUP_BN",
-                        "company_name": "Bac Ninh Precision Mfg",
+                        "company_name": "Bac Ninh Electronics Co.",
                         "region": "Bac Ninh, VN",
                         "compliance_score": 0.92,
                         "facilities": [
@@ -297,7 +299,7 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
             "vendors": [
                 {
                     "vendor_id": "SUP_BN",
-                    "company_name": "Bac Ninh Precision Mfg",
+                    "company_name": "Bac Ninh Electronics Co.",
                     "region": "Bac Ninh, VN",
                     "compliance_score": 0.94,
                     "facilities": [
@@ -533,6 +535,34 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
         run = RunRecord.model_validate(run_payload) if run_payload is not None else None
         return TraceResponse(item=trace_view_from_record(trace, run=run))
 
+    @router.get("/runs/{run_id}/trace/export")
+    def export_run_trace(run_id: str, format: str = "markdown") -> Response:
+        runtime = runtime_getter()
+        trace_payload = runtime.store.get_trace(run_id)
+        if trace_payload is None:
+            raise_not_found("trace", run_id)
+        run_payload = runtime.store.get_run_record(run_id)
+        trace = OrchestrationTrace.model_validate(trace_payload)
+        run = RunRecord.model_validate(run_payload) if run_payload is not None else None
+        view = trace_view_from_record(trace, run=run)
+        normalized = (format or "markdown").strip().lower()
+        if normalized == "json":
+            return Response(
+                content=view.model_dump_json(indent=2),
+                media_type="application/json",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{run_id}-trace.json"'
+                },
+            )
+        markdown = export_trace_markdown(view)
+        return Response(
+            content=markdown,
+            media_type="text/markdown; charset=utf-8",
+            headers={
+                "Content-Disposition": f'attachment; filename="{run_id}-trace.md"'
+            },
+        )
+
     @router.get("/runs/{run_id}/state", response_model=RunStateResponse)
     def get_run_state(run_id: str) -> RunStateResponse:
         runtime = runtime_getter()
@@ -606,6 +636,7 @@ def create_router(runtime_getter: Callable[[], ControlTowerRuntime]) -> APIRoute
                 ) from exc
             raise
         payload = runtime.legacy_response_payload()
+        payload["run_id"] = runtime.state.run_id
         payload["scenario_history_count"] = len(runtime.state.scenario_history)
         return payload
 

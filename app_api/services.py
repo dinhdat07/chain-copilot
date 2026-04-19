@@ -412,7 +412,9 @@ class ControlTowerRuntime:
             ),
         )
 
-    def run_scenario(self, scenario_name: str, seed: int, run_id: str | None = None) -> SystemState:
+    def run_scenario(
+        self, scenario_name: str, seed: int, run_id: str | None = None
+    ) -> SystemState:
         if scenario_name not in list_scenarios():
             raise_not_found("scenario", scenario_name)
 
@@ -421,7 +423,11 @@ class ControlTowerRuntime:
 
         try:
             self.state = self.runner.run(
-                self.state, scenario_name, seed=seed, trace_updater=on_trace_update, run_id=run_id
+                self.state,
+                scenario_name,
+                seed=seed,
+                trace_updater=on_trace_update,
+                run_id=run_id,
             )
         except PendingApprovalError as exc:
             raise_conflict(str(exc), code="pending_approval")
@@ -595,8 +601,7 @@ class ControlTowerRuntime:
         existing_commit_records = [
             ActionExecutionRecord.model_validate(item)
             for item in self.store.list_action_execution_records(limit=None)
-            if item.get("plan_id") == plan_id
-            and item.get("dispatch_mode") == "commit"
+            if item.get("plan_id") == plan_id and item.get("dispatch_mode") == "commit"
         ]
 
         if existing_commit_records:
@@ -613,7 +618,7 @@ class ControlTowerRuntime:
                 "records": [
                     action_execution_record_view(r) for r in existing_commit_records
                 ],
-                "compensation_hints": [], # Historic records don't have active hints
+                "compensation_hints": [],  # Historic records don't have active hints
             }
 
         summary = self.dispatch_service.dispatch_plan(plan, mode=mode)
@@ -1598,6 +1603,85 @@ def trace_view_from_record(
     )
 
 
+def export_trace_markdown(trace: TraceView) -> str:
+    lines: list[str] = []
+    lines.append(f"# Trace Export: {trace.run_id or 'unknown-run'}")
+    lines.append("")
+
+    if trace.event is not None:
+        lines.append("## Event")
+        lines.append(f"- Type: `{trace.event.type}`")
+        lines.append(f"- Severity: `{trace.event.severity}`")
+        lines.append(f"- Source: `{trace.event.source}`")
+        if trace.event.entity_ids:
+            lines.append(
+                "- Entities: "
+                + ", ".join(f"`{item}`" for item in trace.event.entity_ids)
+            )
+        if trace.event.payload:
+            lines.append(f"- Payload: `{trace.event.payload}`")
+        lines.append("")
+
+    lines.append("## Run")
+    lines.append(f"- Trace ID: `{trace.trace_id or ''}`")
+    lines.append(f"- Status: `{trace.status}`")
+    lines.append(f"- Mode: `{trace.mode}`")
+    lines.append(f"- Branch: `{trace.current_branch}`")
+    if trace.selected_strategy:
+        lines.append(f"- Selected strategy: `{trace.selected_strategy}`")
+    if trace.selection_reason:
+        lines.append(f"- Selection reason: {trace.selection_reason}")
+    if trace.approval_reason:
+        lines.append(f"- Approval reason: {trace.approval_reason}")
+    if trace.critic_summary:
+        lines.append(f"- Critic summary: {trace.critic_summary}")
+    lines.append("")
+
+    lines.append("## Route Decisions")
+    if trace.route_decisions:
+        for item in trace.route_decisions:
+            lines.append(
+                f"- `{item.from_node}` -> `{item.to_node}`: {item.reason or item.outcome}"
+            )
+    else:
+        lines.append("- None")
+    lines.append("")
+
+    lines.append("## Agent Steps")
+    for step in trace.steps:
+        lines.append(f"### {step.sequence or 0}. {step.agent} ({step.status})")
+        lines.append(f"- Summary: {step.summary}")
+        lines.append(f"- Reasoning source: `{step.reasoning_source}`")
+        if step.duration_ms is not None:
+            lines.append(f"- Duration: `{step.duration_ms} ms`")
+        if step.observations:
+            lines.append("- Observations:")
+            for item in step.observations:
+                lines.append(f"  - {item}")
+        if step.risks:
+            lines.append("- Risks:")
+            for item in step.risks:
+                lines.append(f"  - {item}")
+        if step.downstream_impacts:
+            lines.append("- Impacts:")
+            for item in step.downstream_impacts:
+                lines.append(f"  - {item}")
+        if step.recommended_action_ids:
+            lines.append(
+                "- Recommended actions: "
+                + ", ".join(f"`{item}`" for item in step.recommended_action_ids)
+            )
+        if step.tradeoffs:
+            lines.append("- Tradeoffs:")
+            for item in step.tradeoffs:
+                lines.append(f"  - {item}")
+        if step.output_snapshot:
+            lines.append(f"- Output snapshot: `{step.output_snapshot}`")
+        lines.append("")
+
+    return "\n".join(lines).strip() + "\n"
+
+
 def reflection_views(state: SystemState) -> list[ReflectionView]:
     if state.memory is None:
         return []
@@ -1713,7 +1797,3 @@ def build_event_from_envelope(envelope: EventEnvelope) -> Event:
         payload=envelope.payload,
         dedupe_key=envelope.idempotency_key,
     )
-
-
-
-
