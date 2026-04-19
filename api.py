@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import FastAPI, HTTPException, Request, WebSocket, WebSocketDisconnect
 from fastapi.encoders import jsonable_encoder
 from fastapi.exceptions import RequestValidationError
@@ -19,6 +21,28 @@ from execution.dispatch_service import ActionDispatchService
 def create_runtime(store: SQLiteStore | None = None) -> ControlTowerRuntime:
     """Creates the main engine instance."""
     return make_runtime(store=store)
+
+
+def _cors_settings_from_env() -> tuple[list[str], bool]:
+    """
+    Reads CORS settings from env.
+
+    CHAINCOPILOT_CORS_ORIGINS supports:
+    - "*" (default): allow all origins (credentials disabled by spec)
+    - comma-separated origins: credentials enabled
+    """
+    raw_origins = os.getenv("CHAINCOPILOT_CORS_ORIGINS", "*").strip()
+    if raw_origins == "*":
+        return ["*"], False
+
+    origins = [
+        origin.strip().rstrip("/")
+        for origin in raw_origins.split(",")
+        if origin.strip()
+    ]
+    if not origins:
+        return ["*"], False
+    return origins, True
 
 
 # Global runtime instance
@@ -76,10 +100,11 @@ def create_app(runtime: ControlTowerRuntime | None = None) -> FastAPI:
         )
     instance = FastAPI(title="ChainCopilot API", version="0.2.0")
     
+    cors_origins, cors_allow_credentials = _cors_settings_from_env()
     instance.add_middleware(
         CORSMiddleware,
-        allow_origins=["*"],
-        allow_credentials=True,
+        allow_origins=cors_origins,
+        allow_credentials=cors_allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
